@@ -26,7 +26,8 @@ Written with Three.js and no build step, so it runs directly on GitHub Pages.
 
 | File | Purpose |
 | --- | --- |
-| `index.html` | Page, UI text, styles, on-screen arrows |
+| `index.html` | Page, UI text, styles, on-screen arrows, boot loader with diagnostics |
+| `vendor/three.module.min.js` | Three.js r160 (MIT, see `vendor/THREE-LICENSE.txt`), served from the same site |
 | `game.js` | The whole game: endless world, 3D animals, crows, sounds, controls |
 | `assets/dog-face.jpg`, `assets/dog-coat.jpg` | Dog face and coat, cropped from the original photo |
 | `assets/cat-face.jpg`, `assets/cat-coat.jpg` | Cat face and coat, cropped from the original photo |
@@ -46,7 +47,12 @@ Any static server works, for example:
 python3 -m http.server 8000
 ```
 
-then open `http://localhost:8000`. An internet connection is needed because Three.js loads from `cdn.jsdelivr.net`.
+then open `http://localhost:8000`. Three.js is included in `vendor/`, so no CDN is needed.
+
+## Troubleshooting
+
+If the game cannot start, a panel shows the boot step where it stopped, the error, browser and WebGL
+info and network checks. Tap **Copy report** and share it. Add `?debug=1` to the URL to see the boot log live.
 
 ## Publish on GitHub Pages
 
