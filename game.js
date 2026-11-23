@@ -186,6 +186,7 @@ let actx = null;
 let master = null;
 let noiseBuf = null;
 let rainGain = null;
+let riverGain = null;
 
 function ensureAudio() {
   if (actx) {
@@ -203,6 +204,7 @@ function ensureAudio() {
   for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
   startLoop(420, 'lowpass', 0.04, true);
   rainGain = startLoop(1400, 'highpass', 0, false);
+  riverGain = startLoop(650, 'bandpass', 0, false);
 }
 
 function startLoop(freq, type, vol, lfoOn) {
@@ -357,6 +359,11 @@ const SFX = {
     noise({ dur: 0.04, vol: 0.12, f: 3500, q: 1.5, sp });
   },
   thunder() { noise({ dur: 2.2, vol: 0.35, f: 120, q: 0.7, type: 'lowpass' }); },
+  croak(sp) {
+    for (const at of [0, 0.18]) tone({ type: 'sawtooth', f0: 150, f1: 95, dur: 0.12, vol: 0.12, at, sp, filt: { type: 'lowpass', f: 700 } });
+  },
+  lap(sp) { noise({ dur: 0.06, vol: 0.1, f: 1600, q: 1, sp }); },
+  splash(sp) { noise({ dur: 0.12, vol: 0.1, f: 1200, q: 0.8, sp }); },
   fire(sp) {
     noise({ dur: 0.35, vol: 0.18, f: 900, q: 0.5, sp });
     tone({ type: 'triangle', f0: 180, f1: 320, dur: 0.25, vol: 0.1, sp });
@@ -542,6 +549,15 @@ function buildMaterials(imgs) {
   mats.monkDome = new THREE.MeshBasicMaterial({ color: 0x2c4fa6, fog: false });
   mats.monkRoof = new THREE.MeshBasicMaterial({ color: 0x8b3b2b, fog: false });
   mats.beacon = new THREE.MeshBasicMaterial({ color: 0xff5a36, transparent: true, opacity: 0.45, depthWrite: false, fog: false });
+  mats.water = std(0x3f97d6, { roughness: 0.15, metalness: 0.1, transparent: true, opacity: 0.9 });
+  mats.mud = std(0x5f5234, { roughness: 1 });
+  mats.pathDirt = std(0x9a8566, { roughness: 1, side: THREE.DoubleSide });
+  mats.stone = std(0xffffff, { roughness: 0.9 });
+  mats.reed = new THREE.MeshLambertMaterial({ color: 0x5f8f3a });
+  mats.cattail = std(0x5a3a1e, { roughness: 0.9 });
+  mats.rock = std(0xffffff, { roughness: 0.95 });
+  mats.lily = new THREE.MeshLambertMaterial({ color: 0x3f8f3a, side: THREE.DoubleSide });
+  mats.bridge = std(0xa8a395, { roughness: 0.95 });
   blobTex = radialCanvasTexture('rgba(20,40,10,0.5)', 'rgba(20,40,10,0)');
   glowTex = radialCanvasTexture('rgba(255,190,90,0.9)', 'rgba(255,120,30,0)');
 }
@@ -640,6 +656,11 @@ function buildGeometry() {
   geo.hat = new THREE.SphereGeometry(1, 14, 8, 0, TAU, 0, Math.PI / 2);
   geo.brim = new THREE.CylinderGeometry(0.27, 0.27, 0.03, 16);
   geo.pole = new THREE.CylinderGeometry(0.04, 0.04, 2.8, 6);
+  geo.reed = new THREE.CylinderGeometry(0.015, 0.03, 1, 4).translate(0, 0.5, 0);
+  geo.cattail = new THREE.CylinderGeometry(0.045, 0.045, 0.22, 6);
+  geo.rock = new THREE.DodecahedronGeometry(0.3, 0);
+  geo.lily = new THREE.CircleGeometry(0.35, 10).rotateX(-Math.PI / 2);
+  geo.cobble = new THREE.DodecahedronGeometry(1, 0);
 }
 
 /* ====================================================================
@@ -893,6 +914,372 @@ function toggleRain() {
 }
 
 /* ====================================================================
+   River (endless, along z), its banks, the bridge and the stone path
+   ==================================================================== */
+const RIVER_W = 7;
+const RIVER_SEG = 160;
+const RIVER_LEN = 320;
+const BRIDGE_Z = 3;
+const PATH_W = 1.7;
+
+function riverX(z) {
+  return 24 + 7 * Math.sin(z * 0.025) + 3 * Math.sin(z * 0.061 + 1.3);
+}
+// Distance from the water's edge: negative inside the river.
+function riverDist(x, z) {
+  return Math.abs(x - riverX(z)) - RIVER_W / 2;
+}
+function inRiver(x, z, pad = 0) {
+  return riverDist(x, z) < pad;
+}
+function onBridge(x, z) {
+  return Math.abs(z - BRIDGE_Z) < 1.05 && Math.abs(x - riverX(BRIDGE_Z)) < RIVER_W / 2 + 1.3;
+}
+
+// Stone path: from the tent past Capi's house and the plates, over the bridge,
+// with branches to Capi Food / Chest Shop and to June Food.
+const PATH_LINES = [
+  [[-11, 2.4], [-7.5, 1.2], [-6, 0.4], [-1.5, 2.2], [3, 2.8], [9, 3.2], [17, 3.1],
+    [riverX(BRIDGE_Z) - RIVER_W / 2 - 1.3, BRIDGE_Z], [riverX(BRIDGE_Z) + RIVER_W / 2 + 1.3, BRIDGE_Z],
+    [riverX(BRIDGE_Z) + 12, 2.2], [52, -1]],
+  [[-7.5, 1.2], [-9.5, -3], [-11.6, -5.6], [-9.6, -8.8]],
+  [[6, 3], [8.4, -0.6], [8.5, -4.4]],
+];
+const PATH_SEGS = [];
+for (const line of PATH_LINES) {
+  for (let i = 0; i < line.length - 1; i++) {
+    const [ax, az] = line[i];
+    const [bx, bz] = line[i + 1];
+    PATH_SEGS.push({
+      ax, az, bx, bz,
+      minX: Math.min(ax, bx) - 3, maxX: Math.max(ax, bx) + 3,
+      minZ: Math.min(az, bz) - 3, maxZ: Math.max(az, bz) + 3,
+    });
+  }
+}
+function pathDist(x, z) {
+  let best = Infinity;
+  for (const sg of PATH_SEGS) {
+    if (x < sg.minX || x > sg.maxX || z < sg.minZ || z > sg.maxZ) continue;
+    const dx = sg.bx - sg.ax;
+    const dz = sg.bz - sg.az;
+    const t = clamp(((x - sg.ax) * dx + (z - sg.az) * dz) / (dx * dx + dz * dz || 1), 0, 1);
+    const d = Math.hypot(x - (sg.ax + dx * t), z - (sg.az + dz * t));
+    if (d < best) best = d;
+  }
+  return best;
+}
+function onPath(x, z, pad = 0) {
+  return pathDist(x, z) < PATH_W / 2 + pad;
+}
+
+const river = { water: null, bank: null, lastZ: null, tex: null };
+
+function waterTexture() {
+  const c = document.createElement('canvas');
+  c.width = c.height = 256;
+  const g = c.getContext('2d');
+  g.fillStyle = '#3d8fc9';
+  g.fillRect(0, 0, 256, 256);
+  const r = mulberry32(5);
+  for (let i = 0; i < 70; i++) {
+    const x = r() * 256;
+    const y = r() * 256;
+    const w = 3 + r() * 10;
+    const h = 20 + r() * 60;
+    g.fillStyle = `rgba(255,255,255,${0.05 + r() * 0.13})`;
+    for (const oy of [-256, 0, 256]) {
+      g.beginPath();
+      g.ellipse(x, y + oy, w, h, 0, 0, TAU);
+      g.fill();
+    }
+  }
+  return texFromCanvas(c, true);
+}
+
+function stripGeometry() {
+  const n = RIVER_SEG + 1;
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(n * 6), 3));
+  g.setAttribute('uv', new THREE.BufferAttribute(new Float32Array(n * 4), 2));
+  const nor = new Float32Array(n * 6);
+  for (let i = 0; i < n * 2; i++) nor[i * 3 + 1] = 1;
+  g.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
+  const idx = [];
+  for (let i = 0; i < RIVER_SEG; i++) {
+    const a = 2 * i;
+    idx.push(a, a + 2, a + 1, a + 1, a + 2, a + 3);
+  }
+  g.setIndex(idx);
+  return g;
+}
+
+function fillStrip(mesh, halfW, y) {
+  const p = mesh.geometry.attributes.position;
+  const uv = mesh.geometry.attributes.uv;
+  for (let i = 0; i <= RIVER_SEG; i++) {
+    const z = river.lastZ + (i * RIVER_LEN) / RIVER_SEG;
+    const cx = riverX(z);
+    p.setXYZ(2 * i, cx - halfW, y, z);
+    p.setXYZ(2 * i + 1, cx + halfW, y, z);
+    uv.setXY(2 * i, 0, z / 6);
+    uv.setXY(2 * i + 1, 1, z / 6);
+  }
+  p.needsUpdate = true;
+  uv.needsUpdate = true;
+  mesh.geometry.computeBoundingSphere();
+}
+
+function updateRiverGeometry(force) {
+  const z0 = Math.round(player.z / 10) * 10 - RIVER_LEN / 2;
+  if (!force && z0 === river.lastZ) return;
+  river.lastZ = z0;
+  fillStrip(river.water, RIVER_W / 2, 0.035);
+  fillStrip(river.bank, RIVER_W / 2 + 1.4, 0.014);
+}
+
+function buildRiver() {
+  river.tex = waterTexture();
+  mats.water.map = river.tex;
+  mats.water.needsUpdate = true;
+  river.water = new THREE.Mesh(stripGeometry(), mats.water);
+  river.bank = new THREE.Mesh(stripGeometry(), mats.mud);
+  for (const m of [river.water, river.bank]) {
+    m.receiveShadow = true;
+    m.frustumCulled = false;
+    scene.add(m);
+  }
+  updateRiverGeometry(true);
+}
+
+function updateRiver(dt) {
+  updateRiverGeometry(false);
+  river.tex.offset.y -= dt * 0.12;
+}
+
+function buildPath() {
+  // packed dirt under the stones
+  for (const line of PATH_LINES) {
+    const pos = [];
+    const nor = [];
+    const idx = [];
+    line.forEach((pt, i) => {
+      const prev = line[Math.max(0, i - 1)];
+      const next = line[Math.min(line.length - 1, i + 1)];
+      let dx = next[0] - prev[0];
+      let dz = next[1] - prev[1];
+      const L = Math.hypot(dx, dz) || 1;
+      dx /= L;
+      dz /= L;
+      const w = PATH_W / 2 + 0.15;
+      pos.push(pt[0] - dz * w, 0.012, pt[1] + dx * w, pt[0] + dz * w, 0.012, pt[1] - dx * w);
+      nor.push(0, 1, 0, 0, 1, 0);
+      if (i < line.length - 1) {
+        const a = 2 * i;
+        idx.push(a, a + 2, a + 1, a + 1, a + 2, a + 3);
+      }
+    });
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    g.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3));
+    g.setIndex(idx);
+    const m = new THREE.Mesh(g, mats.pathDirt);
+    m.receiveShadow = true;
+    scene.add(m);
+  }
+  // cobblestones
+  const r = mulberry32(77);
+  const stones = [];
+  for (const sg of PATH_SEGS) {
+    const dx = sg.bx - sg.ax;
+    const dz = sg.bz - sg.az;
+    const L = Math.hypot(dx, dz);
+    const ux = dx / L;
+    const uz = dz / L;
+    for (let t = 0; t < L; t += 0.42) {
+      for (const off of [-0.52, 0, 0.52]) {
+        const o = off + (r() - 0.5) * 0.14;
+        const x = sg.ax + ux * t - uz * o;
+        const z = sg.az + uz * t + ux * o;
+        if (inRiver(x, z, 0.8)) continue;
+        stones.push({ x, z, s: 0.18 + r() * 0.08, rot: r() * TAU, l: 0.38 + r() * 0.2 });
+      }
+    }
+  }
+  const mesh = new THREE.InstancedMesh(geo.cobble, mats.stone, stones.length);
+  const col = new THREE.Color();
+  stones.forEach((st, i) => {
+    dummy.position.set(st.x, 0.03, st.z);
+    dummy.rotation.set(0, st.rot, 0);
+    dummy.scale.set(st.s, 0.05, st.s * 0.85);
+    dummy.updateMatrix();
+    mesh.setMatrixAt(i, dummy.matrix);
+    mesh.setColorAt(i, col.setHSL(0.1, 0.06, st.l));
+  });
+  mesh.instanceMatrix.needsUpdate = true;
+  if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+  mesh.receiveShadow = true;
+  scene.add(mesh);
+}
+
+function buildBridge() {
+  const len = RIVER_W + 2.6;
+  const g = new THREE.Group();
+  g.position.set(riverX(BRIDGE_Z), 0, BRIDGE_Z);
+  scene.add(g);
+  const box = (w, h, d, x, y, z) => {
+    const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mats.bridge);
+    m.position.set(x, y, z);
+    g.add(m);
+  };
+  box(len, 0.14, 2.1, 0, 0.2, 0);
+  for (const z of [-1.0, 1.0]) box(len, 0.4, 0.16, 0, 0.45, z);
+  for (const x of [-len / 2, len / 2]) for (const z of [-1.0, 1.0]) box(0.32, 0.7, 0.32, x, 0.35, z);
+  for (const x of [-1.6, 1.6]) {
+    const pier = new THREE.Mesh(new THREE.CylinderGeometry(0.25, 0.3, 0.6, 8), mats.bridge);
+    pier.position.set(x, -0.05, 0);
+    g.add(pier);
+  }
+  shadowAll(g);
+}
+
+// Reeds, cattails, rocks and lily pads for chunks that touch the river.
+function addRiverDecor(add, r, ox, oz) {
+  const xs = [riverX(oz), riverX(oz + CHUNK / 2), riverX(oz + CHUNK)];
+  const lo = Math.min(...xs) - RIVER_W / 2 - 2;
+  const hi = Math.max(...xs) + RIVER_W / 2 + 2;
+  if (hi < ox || lo > ox + CHUNK) return;
+  const inChunk = (x) => x >= ox && x < ox + CHUNK;
+  const col = new THREE.Color();
+  const reeds = [];
+  const tops = [];
+  for (let i = 0; i < 70; i++) {
+    const z = oz + r() * CHUNK;
+    const side = r() < 0.5 ? -1 : 1;
+    const x = riverX(z) + side * (RIVER_W / 2 + (r() - 0.35) * 1.2);
+    if (!inChunk(x) || onBridge(x, z) || onPath(x, z, 0.6)) continue;
+    const h = 0.7 + r() * 0.8;
+    reeds.push({ x, z, h, lean: (r() - 0.5) * 0.25, rot: r() * TAU });
+    if (r() < 0.35) tops.push({ x, z, h });
+  }
+  if (reeds.length) {
+    const m = add(new THREE.InstancedMesh(geo.reed, mats.reed, reeds.length));
+    reeds.forEach((d, i) => {
+      dummy.position.set(d.x, 0, d.z);
+      dummy.rotation.set(d.lean, d.rot, d.lean * 0.5);
+      dummy.scale.set(1, d.h, 1);
+      dummy.updateMatrix();
+      m.setMatrixAt(i, dummy.matrix);
+    });
+    m.instanceMatrix.needsUpdate = true;
+  }
+  if (tops.length) {
+    const m = add(new THREE.InstancedMesh(geo.cattail, mats.cattail, tops.length));
+    tops.forEach((d, i) => {
+      dummy.position.set(d.x, d.h - 0.06, d.z);
+      dummy.rotation.set(0, 0, 0);
+      dummy.scale.set(1, 1, 1);
+      dummy.updateMatrix();
+      m.setMatrixAt(i, dummy.matrix);
+    });
+    m.instanceMatrix.needsUpdate = true;
+  }
+  const rocks = [];
+  for (let i = 0; i < 14; i++) {
+    const z = oz + r() * CHUNK;
+    const side = r() < 0.5 ? -1 : 1;
+    const x = riverX(z) + side * (RIVER_W / 2 + (r() - 0.6) * 2);
+    if (inChunk(x) && !onBridge(x, z)) rocks.push({ x, z, s: 0.4 + r() * 0.7, l: 0.35 + r() * 0.25, rot: r() * TAU });
+  }
+  if (rocks.length) {
+    const m = add(new THREE.InstancedMesh(geo.rock, mats.rock, rocks.length));
+    rocks.forEach((d, i) => {
+      dummy.position.set(d.x, 0.05, d.z);
+      dummy.rotation.set(0, d.rot, 0);
+      dummy.scale.set(d.s, d.s * 0.6, d.s);
+      dummy.updateMatrix();
+      m.setMatrixAt(i, dummy.matrix);
+      m.setColorAt(i, col.setHSL(0.08, 0.05, d.l));
+    });
+    m.instanceMatrix.needsUpdate = true;
+    if (m.instanceColor) m.instanceColor.needsUpdate = true;
+    m.castShadow = true;
+  }
+  const pads = [];
+  for (let i = 0; i < 10; i++) {
+    const z = oz + r() * CHUNK;
+    const x = riverX(z) + (r() - 0.5) * (RIVER_W - 1.5);
+    if (inChunk(x) && !onBridge(x, z)) pads.push({ x, z, s: 0.7 + r() * 0.6, rot: r() * TAU, flower: r() < 0.3 });
+  }
+  if (pads.length) {
+    const m = add(new THREE.InstancedMesh(geo.lily, mats.lily, pads.length));
+    pads.forEach((d, i) => {
+      dummy.position.set(d.x, 0.045, d.z);
+      dummy.rotation.set(0, d.rot, 0);
+      dummy.scale.set(d.s, 1, d.s);
+      dummy.updateMatrix();
+      m.setMatrixAt(i, dummy.matrix);
+    });
+    m.instanceMatrix.needsUpdate = true;
+    const flowers = pads.filter((d) => d.flower);
+    if (flowers.length) {
+      const f = add(new THREE.InstancedMesh(geo.flower, mats.flower, flowers.length));
+      flowers.forEach((d, i) => {
+        dummy.position.set(d.x, 0.09, d.z);
+        dummy.rotation.set(0, 0, 0);
+        dummy.scale.setScalar(1.2);
+        dummy.updateMatrix();
+        f.setMatrixAt(i, dummy.matrix);
+        f.setColorAt(i, col.set(0xff8fc8));
+      });
+      f.instanceMatrix.needsUpdate = true;
+      if (f.instanceColor) f.instanceColor.needsUpdate = true;
+    }
+  }
+}
+
+/* ---------- fireflies (night) ---------- */
+const FF_N = 70;
+const ffData = [];
+let fireflies = null;
+
+function buildFireflies() {
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(FF_N * 3), 3));
+  g.setAttribute('color', new THREE.BufferAttribute(new Float32Array(FF_N * 3), 3));
+  for (let i = 0; i < FF_N; i++) {
+    ffData.push({ x: rnd(-14, 14), z: rnd(-14, 14), y: rnd(0.4, 2.2), ph: rnd(0, TAU), sp: rnd(0.3, 0.8) });
+  }
+  const m = new THREE.PointsMaterial({
+    size: 0.3, map: glowTex, vertexColors: true, transparent: true, opacity: 0,
+    depthWrite: false, blending: THREE.AdditiveBlending,
+  });
+  fireflies = new THREE.Points(g, m);
+  fireflies.frustumCulled = false;
+  scene.add(fireflies);
+}
+
+function updateFireflies(dt) {
+  const night = (1 - state.dayF) * (1 - state.rain * 0.8);
+  fireflies.visible = night > 0.05;
+  if (!fireflies.visible) return;
+  fireflies.material.opacity = night;
+  const p = fireflies.geometry.attributes.position;
+  const c = fireflies.geometry.attributes.color;
+  for (let i = 0; i < FF_N; i++) {
+    const d = ffData[i];
+    d.ph += dt * d.sp;
+    d.x = wrapNear(d.x + Math.sin(d.ph * 1.7) * dt * 0.6, player.x, 14);
+    d.z = wrapNear(d.z + Math.cos(d.ph * 1.3) * dt * 0.6, player.z, 14);
+    p.setXYZ(i, d.x, d.y + Math.sin(d.ph * 2.3) * 0.25, d.z);
+    const b = 0.35 + 0.65 * Math.max(0, Math.sin(T * 3 + d.ph * 5));
+    c.setXYZ(i, 0.85 * b, b, 0.4 * b);
+  }
+  p.needsUpdate = true;
+  c.needsUpdate = true;
+}
+
+/* ====================================================================
    Points of interest: shops, vets and pet parks (vets/parks are random)
    ==================================================================== */
 const pois = [];      // everything that appears on the map
@@ -911,7 +1298,7 @@ function generateRandomPois() {
       const a = rnd(0, TAU);
       const d = rnd(min, max);
       const p = { x: Math.cos(a) * d, z: Math.sin(a) * d };
-      if (taken.every((q) => Math.hypot(q.x - p.x, q.z - p.z) > 30)) {
+      if (riverDist(p.x, p.z) > 16 && pathDist(p.x, p.z) > 10 && taken.every((q) => Math.hypot(q.x - p.x, q.z - p.z) > 30)) {
         taken.push(p);
         return p;
       }
@@ -951,6 +1338,7 @@ let chunkPZ = null;
 
 function nearStatic(x, z) {
   if (Math.hypot(x, z) < 11) return true;
+  if (inRiver(x, z, 2) || onPath(x, z, 1)) return true;
   for (const p of pois) if (Math.hypot(x - p.x, z - p.z) < (p.clear || 7)) return true;
   return false;
 }
@@ -976,7 +1364,7 @@ function buildChunk(cx, cz, key) {
     dummy.rotation.set(0, r() * TAU, 0);
     dummy.scale.set(0.8 + r() * 0.6, sy, 0.8 + r() * 0.6);
     // no grass on the sand of the pet parks
-    if (parks.some((pk) => Math.hypot(x - pk.x, z - pk.z) < pk.r + 0.3)) dummy.scale.set(0, 0, 0);
+    if (parks.some((pk) => Math.hypot(x - pk.x, z - pk.z) < pk.r + 0.3) || inRiver(x, z, 0.4) || onPath(x, z, 0.1)) dummy.scale.set(0, 0, 0);
     dummy.updateMatrix();
     grass.setMatrixAt(i, dummy.matrix);
     if (stem) {
@@ -1005,6 +1393,8 @@ function buildChunk(cx, cz, key) {
     fl.instanceMatrix.needsUpdate = true;
     if (fl.instanceColor) fl.instanceColor.needsUpdate = true;
   }
+
+  addRiverDecor(add, r, ox, oz);
 
   const leaves = add(new THREE.InstancedMesh(geo.leaf, mats.leaf, LEAVES_PER));
   for (let i = 0; i < LEAVES_PER; i++) {
@@ -2103,6 +2493,15 @@ function buildAnimals() {
   animals.cat.z = -1.2;
 }
 
+// Walk to the nearest river bank and drink for a few seconds.
+function goDrink(a) {
+  let z = a.z + rnd(-3, 3);
+  if (Math.abs(z - BRIDGE_Z) < 3) z += 5;
+  const side = Math.sign(a.x - riverX(z)) || -1;
+  a.drink = { x: riverX(z) + side * (RIVER_W / 2 - 0.25), z, side, t: 4.5, lap: 0, said: false, at: false };
+  a.state = 'drink';
+}
+
 function pickWander(a) {
   const ang = rnd(0, TAU);
   const d = Math.sqrt(Math.random()) * a.home.r;
@@ -2222,11 +2621,35 @@ function updateAnimal(a, dt, t) {
     a.state = 'idle';
     a.timer = 1;
     a.home = { x: a.x, z: a.z, r: 3 };
+  } else if (a.state === 'drink') {
+    const dk = a.drink;
+    if (stepTo(a, dk.x, dk.z, a.speed * 1.3 * slow, dt, 0.2)) {
+      a.yaw = angleLerp(a.yaw, Math.atan2(-dk.side, 0), Math.min(1, dt * 5));
+      dk.at = true;
+      dk.t -= dt;
+      dk.lap -= dt;
+      if (dk.lap <= 0) {
+        dk.lap = 0.5;
+        SFX.lap(spatial(a.x, a.z));
+      }
+      if (!dk.said) {
+        dk.said = true;
+        bubble('💧', a.x, a.cfg.height + 0.2, a.z, { size: 56, bg: false, life: 1.3 });
+      }
+      if (dk.t <= 0) {
+        a.state = 'idle';
+        a.timer = rnd(2, 4);
+        a.happy = 0.8;
+      }
+    }
   } else if (a.state === 'idle') {
     a.timer -= dt;
     const pd = Math.hypot(player.x - a.x, player.z - a.z);
     if (pd < 4) a.yaw = angleLerp(a.yaw, Math.atan2(player.x - a.x, player.z - a.z), Math.min(1, dt * 4));
-    if (a.timer <= 0) pickWander(a);
+    if (a.timer <= 0) {
+      if (Math.random() < 0.3 && Math.abs(riverDist(a.x, a.z)) < 60) goDrink(a);
+      else pickWander(a);
+    }
   } else if (a.state === 'walk') {
     if (stepTo(a, a.target.x, a.target.z, a.speed * slow, dt, 0.1)) {
       a.state = 'idle';
@@ -2255,7 +2678,9 @@ function updateAnimal(a, dt, t) {
   a.holder.position.y = a.moving ? Math.abs(Math.sin(a.gait)) * 0.03 : 0;
   const hop = (a.kind === 'dog' && a.happy > 0) || (a.state === 'play' && a.happy > 0);
   a.root.position.y = hop ? Math.abs(Math.sin(t * 9)) * 0.14 * a.cfg.scale : 0;
-  const wantNeck = a.state === 'eat' ? 0.95 : (a.sick ? 0.3 : 0) + Math.sin(t * 2 + a.x) * 0.04;
+  if (onBridge(a.x, a.z)) a.root.position.y += 0.27;
+  else if (inRiver(a.x, a.z, -0.4)) a.root.position.y -= 0.12 * a.cfg.scale;
+  const wantNeck = a.state === 'eat' || (a.state === 'drink' && a.drink.at) ? 0.95 : (a.sick ? 0.3 : 0) + Math.sin(t * 2 + a.x) * 0.04;
   a.neckX = lerp(a.neckX, wantNeck, Math.min(1, dt * 6));
   a.neck.rotation.x = a.neckX;
   a.tongue.visible = a.happy > 0 || a.state === 'eat';
@@ -2824,6 +3249,8 @@ function updatePlayer(dt) {
       state.sprintCD = 0.8;
     }
     if (state.hunger <= 0) speed *= 0.7;
+    const wading = inRiver(player.x, player.z) && !onBridge(player.x, player.z);
+    if (wading) speed *= 0.55;
     player.x += mx * speed * dt;
     player.z += mz * speed * dt;
     player.yaw = angleLerp(player.yaw, Math.atan2(mx, mz), Math.min(1, dt * 10));
@@ -2831,7 +3258,7 @@ function updatePlayer(dt) {
     player.stepT -= dt;
     if (player.stepT <= 0 && actx) {
       player.stepT = sprinting ? 0.3 : 0.42;
-      SFX.step(spatial(player.x, player.z));
+      (wading ? SFX.splash : SFX.step)(spatial(player.x, player.z));
     }
   }
   if (!sprinting) {
@@ -2850,7 +3277,8 @@ function updatePlayer(dt) {
     }
   }
 
-  player.group.position.set(player.x, 0, player.z);
+  const lift = onBridge(player.x, player.z) ? 0.27 : inRiver(player.x, player.z, -0.4) ? -0.14 : 0;
+  player.group.position.set(player.x, lift, player.z);
   player.group.rotation.y = player.yaw;
   player.body.position.y = 0.42 + (moving ? Math.abs(Math.sin(player.walkT)) * 0.05 : 0);
   if (state.eatT <= 0) player.body.scale.set(0.8, 0.8 + (moving ? Math.sin(player.walkT * 2) * 0.03 : 0), 0.8);
@@ -2869,7 +3297,7 @@ function updateCamera(dt) {
     const moving = dirs.size > 0 || !!goal;
     const bob = moving ? Math.sin(player.walkT * 2) * 0.035 : 0;
     const ex = player.x;
-    const ey = 0.74 + bob;
+    const ey = 0.74 + bob + player.group.position.y;
     const ez = player.z;
     const cp = Math.cos(state.fpPitch);
     camera.position.set(ex, ey, ez);
@@ -3221,6 +3649,31 @@ function drawMap(cv, range, big) {
     g.font = '600 11px system-ui, sans-serif';
     g.textAlign = 'left';
     g.fillText(`grid: ${step} m · N ↑`, 8, H - 8);
+  }
+
+  // river and stone path
+  g.lineCap = 'round';
+  g.lineJoin = 'round';
+  g.strokeStyle = '#3f8fd0';
+  g.lineWidth = Math.max(3, RIVER_W * s);
+  g.beginPath();
+  const zStep = Math.max(2, range / 40);
+  for (let z = cz - range * 1.5, first = true; z <= cz + range * 1.5; z += zStep, first = false) {
+    const [x, y] = toS(riverX(z), z);
+    if (first) g.moveTo(x, y);
+    else g.lineTo(x, y);
+  }
+  g.stroke();
+  g.strokeStyle = '#c9b996';
+  g.lineWidth = Math.max(2, PATH_W * s);
+  for (const line of PATH_LINES) {
+    g.beginPath();
+    line.forEach(([px, pz], i) => {
+      const [x, y] = toS(px, pz);
+      if (i) g.lineTo(x, y);
+      else g.moveTo(x, y);
+    });
+    g.stroke();
   }
 
   // torches
@@ -3956,9 +4409,17 @@ function onResize() {
    Ambient sound
    ==================================================================== */
 let birdT = 2;
+let frogT = 4;
 function updateAmbient(dt) {
   if (!actx) return;
   if (rainGain) rainGain.gain.setTargetAtTime(0.22 * state.rain, actx.currentTime, 0.2);
+  const rd = Math.max(0, riverDist(player.x, player.z));
+  if (riverGain) riverGain.gain.setTargetAtTime(0.14 * Math.pow(clamp(1 - rd / 30, 0, 1), 2), actx.currentTime, 0.3);
+  frogT -= dt;
+  if (frogT <= 0) {
+    frogT = rnd(3, 7);
+    if (isNight() && rd < 25) SFX.croak(spatial(riverX(player.z), player.z + rnd(-8, 8)));
+  }
   birdT -= dt;
   if (birdT <= 0 && state.rain < 0.3 && !isNight()) {
     birdT = rnd(1.8, 4.5);
@@ -3994,6 +4455,8 @@ function frame(now) {
   updateParks(dt);
   for (const c of crows) updateCrow(c, dt, T);
   updateChestShop(dt);
+  updateRiver(dt);
+  updateFireflies(dt);
   updateTorches(dt);
   updateFlyers(dt, T);
   updateRain(dt);
@@ -4071,6 +4534,9 @@ function buildWorld() {
   buildShop({ pos: JUNE_SHOP, rot: -0.6, wall: mats.juneWall, roof: mats.juneRoof, sign: mats.signJune, kind: 'juneshop', ref: JUNE_SHOP_REF, icon: '🐟', label: 'June Food' });
   buildChestShop();
   buildTent();
+  buildRiver();
+  buildPath();
+  buildBridge();
   generateRandomPois();
   for (const v of vets) buildVet(v);
   for (const pk of parks) buildPark(pk);
@@ -4079,6 +4545,7 @@ function buildWorld() {
   buildPlayer();
   buildFlyers();
   buildBeacon();
+  buildFireflies();
   updateChunks(true);
 }
 
