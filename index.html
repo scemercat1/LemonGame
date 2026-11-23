@@ -360,6 +360,71 @@
     body.touch #hud .row { font-size: 12px; }
     body.touch .hp { font-size: 10px; }
 
+    /* ---------- My Day account and badges ---------- */
+    input { -webkit-user-select: text; user-select: text; }
+    .myday-btn {
+      display: block;
+      width: 100%;
+      margin-top: 9px;
+      border: 0;
+      border-radius: 10px;
+      padding: 7px 8px;
+      font: 700 12px/1.2 system-ui, -apple-system, sans-serif;
+      color: #fff;
+      background: linear-gradient(90deg, #f0a020, #e0761a);
+      cursor: pointer;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    #mydayOverlay { z-index: 36; }
+    .myday-card { max-width: 440px; }
+    .md-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+    .md-head h2 { margin: 0; font-size: 20px; }
+    .md-x { border: 0; background: #eee8cc; width: 34px; height: 34px; border-radius: 50%; font-size: 16px; cursor: pointer; }
+    .md-text { font-size: 14px; margin: 10px 0; }
+    #mdForm label { display: block; font-size: 13px; font-weight: 700; margin: 8px 0; }
+    #mdForm input {
+      display: block;
+      width: 100%;
+      margin-top: 4px;
+      padding: 11px 12px;
+      font-size: 16px;
+      border: 2px solid #e2dcb8;
+      border-radius: 12px;
+      background: #fff;
+      color: var(--ink);
+    }
+    #mdForm input:focus { outline: none; border-color: var(--lemon); }
+    .md-btns { display: flex; gap: 8px; margin-top: 10px; }
+    .md-btns button { flex: 1; margin: 0; padding: 12px; font-size: 16px; }
+    .md-btns button:disabled { opacity: 0.6; }
+    .md-status { font-size: 13px; color: #2e7d32; margin: 8px 0 0; min-height: 0; }
+    .md-error { font-size: 13px; color: #d32f2f; font-weight: 700; margin: 6px 0 0; }
+    .md-status:empty, .md-error:empty { display: none; }
+    .md-retry { width: 100%; margin-top: 8px; padding: 10px; font-size: 15px; }
+    .md-sub { margin: 16px 0 6px; font-size: 16px; }
+    .md-note { font-size: 12px; opacity: 0.75; margin: 0 0 6px; }
+    .badges { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+    .badge {
+      display: grid;
+      grid-template-columns: 40px 1fr auto;
+      align-items: center;
+      gap: 10px;
+      padding: 8px 10px;
+      border-radius: 14px;
+      background: #f6f2d8;
+      border: 2px solid transparent;
+    }
+    .badge small { display: block; font-size: 12px; opacity: 0.8; margin-top: 2px; }
+    .badge-icon { font-size: 28px; text-align: center; }
+    .badge-tag { font-size: 11px; font-weight: 800; padding: 3px 8px; border-radius: 99px; background: rgba(0, 0, 0, 0.08); }
+    .badge.locked { filter: grayscale(1); opacity: 0.55; }
+    .badge.unlocked.rarity-common { border-color: #8bc34a; background: #eef8e0; }
+    .badge.unlocked.rarity-rare { border-color: #2d6cdf; background: #e5efff; }
+    .badge.unlocked.rarity-legendary { border-color: #f0a020; background: linear-gradient(90deg, #fff3cf, #ffe3a8); }
+    .badge.unlocked .badge-tag { background: #2e7d32; color: #fff; }
+
     /* ---------- sleep fade ---------- */
     #fade {
       position: fixed;
@@ -497,6 +562,7 @@
       <div class="bar"><i id="fCatBar"></i></div>
       <div id="fCatHp" class="hp"></div>
     </div>
+    <button id="mydayBtn" class="myday-btn" type="button">☁ Save progress with My Day</button>
   </div>
 
   <div class="top-right">
@@ -557,6 +623,47 @@
   <div class="actions">
     <button id="sprintBtn" class="action touch-only" aria-label="Sprint">SPRINT</button>
     <button id="callBtn" class="action" aria-label="Call friends">🐾<br>Call</button>
+  </div>
+
+  <div id="mydayOverlay" class="overlay hidden">
+    <div class="card myday-card" role="dialog" aria-labelledby="mdTitle">
+      <div class="md-head">
+        <h2 id="mdTitle">☁ Save progress with My Day</h2>
+        <button id="mdClose" class="md-x" type="button" aria-label="Close">✕</button>
+      </div>
+
+      <div id="mdSignedOut">
+        <p class="md-text">Sign in with your My Day account to save your progress, load it on any device and earn badges. Without an account the game works the same, but nothing is saved.</p>
+        <form id="mdForm" autocomplete="on" novalidate>
+          <label>Username
+            <input id="mdUsername" name="username" type="text" autocomplete="username" autocapitalize="none" autocorrect="off" spellcheck="false" maxlength="20" placeholder="your_username">
+          </label>
+          <label>Password
+            <input id="mdPassword" name="password" type="password" autocomplete="current-password" placeholder="At least 6 characters">
+          </label>
+          <div class="md-btns">
+            <button id="mdSignIn" class="primary" type="submit">Sign in</button>
+            <button id="mdCreate" class="secondary" type="button">Create account</button>
+          </div>
+        </form>
+      </div>
+
+      <div id="mdSignedIn" class="hidden">
+        <p class="md-text">Signed in as <b id="mdUser"></b>. Your progress is saved every 2 minutes.</p>
+        <div class="md-btns">
+          <button id="mdSaveNow" class="primary" type="button">Save now</button>
+          <button id="mdSignOut" class="secondary" type="button">Sign out</button>
+        </div>
+      </div>
+
+      <p id="mdStatus" class="md-status" role="status"></p>
+      <p id="mdError" class="md-error" role="alert"></p>
+      <button id="mdRetry" class="secondary md-retry hidden" type="button">Retry</button>
+
+      <h3 class="md-sub">🏅 Badges</h3>
+      <p id="mdBadgeNote" class="md-note">Sign in to earn badges.</p>
+      <ul id="mdBadges" class="badges"></ul>
+    </div>
   </div>
 
   <div id="fade"></div>

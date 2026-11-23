@@ -4,6 +4,7 @@
 */
 // Three.js r160 is vendored next to the game so it loads from the same site (no CDN needed).
 import * as THREE from './vendor/three.module.min.js';
+import * as MyDay from './myday.js';
 
 // Boot diagnostics live in index.html; these helpers are safe if they are missing.
 const boot = window.__boot || { stage() {}, fail(e) { console.error(e); }, done() {} };
@@ -1329,8 +1330,24 @@ function buildVet(v) {
   cross.position.set(0, 5.6, 0);
   g.add(cross);
   v.cross = cross;
+  v.group = g;
   shadowAll(g);
-  obstacles.push({ x: v.x, z: v.z, r: 3.6, ck: 'static' });
+  v.obstacle = { x: v.x, z: v.z, r: 3.6, ck: 'static' };
+  obstacles.push(v.obstacle);
+}
+
+// Moves a vet or a park (used when a save is loaded, so the map stays the same).
+function movePoi(p, x, z) {
+  p.x = x;
+  p.z = z;
+  if (p.group) {
+    p.group.position.set(x, 0, z);
+    p.group.rotation.y = Math.atan2(-x, -z);
+  }
+  if (p.obstacle) {
+    p.obstacle.x = x;
+    p.obstacle.z = z;
+  }
 }
 
 function buildPark(pk) {
@@ -1338,6 +1355,7 @@ function buildPark(pk) {
   g.position.set(pk.x, 0, pk.z);
   g.rotation.y = Math.atan2(-pk.x, -pk.z);
   scene.add(g);
+  pk.group = g;
   const sand = new THREE.Mesh(new THREE.CircleGeometry(pk.r, 40), mats.sand);
   sand.rotation.x = -Math.PI / 2;
   sand.position.y = 0.015;
@@ -1461,16 +1479,26 @@ function placeTorch(x, z) {
     return;
   }
   removeOne(slot);
+  spawnTorch(x, z);
+  SFX.fire(spatial(x, z));
+  toast('Torch placed 🔥');
+}
+
+function spawnTorch(x, z) {
   const g = buildTorchMesh(true);
   g.position.set(x, 0, z);
   scene.add(g);
   shadowAll(g);
-  g.userData.glow.castShadow = false;
   const rec = { x, z, group: g, ph: rnd(0, TAU) };
   for (const m of g.userData.parts) pickable(m, 'torch', rec);
   torches.push(rec);
-  SFX.fire(spatial(x, z));
-  toast('Torch placed 🔥');
+  return rec;
+}
+
+function removeTorch(rec) {
+  for (const m of rec.group.userData.parts) pickables.delete(m);
+  scene.remove(rec.group);
+  torches.splice(torches.indexOf(rec), 1);
 }
 
 function pickupTorch(rec) {
@@ -1478,9 +1506,7 @@ function pickupTorch(rec) {
     toast('Your inventory is full.');
     return;
   }
-  for (const m of rec.group.userData.parts) pickables.delete(m);
-  scene.remove(rec.group);
-  torches.splice(torches.indexOf(rec), 1);
+  removeTorch(rec);
   SFX.pick(spatial(rec.x, rec.z));
   toast('Torch picked up.');
 }
@@ -2844,6 +2870,354 @@ function updateMaps(dt) {
 }
 
 /* ====================================================================
+   Save data: what is stored in gameSaves/{uid}
+   ==================================================================== */
+const r2 = (v) => Math.round(v * 100) / 100;
+
+function serializeGame() {
+  return {
+    v: 1,
+    day: state.day,
+    tod: Math.round(state.tod * 1000) / 1000,
+    hunger: Math.round(state.hunger),
+    stamina: Math.round(state.stamina),
+    lemons: state.lemons,
+    pets: state.pets,
+    fed: state.fed,
+    inv: state.inv.map((s) => (s ? { type: s.type, n: s.n } : null)),
+    sel: state.sel,
+    player: { x: r2(player.x), z: r2(player.z), yaw: r2(player.yaw) },
+    animals: animalList.map((a) => ({ kind: a.kind, x: r2(a.x), z: r2(a.z), friend: r2(a.friend), lastVet: a.lastVet, sick: a.sick })),
+    torches: torches.map((t) => [r2(t.x), r2(t.z)]),
+    picked: [...picked].slice(-3000),
+    vets: vets.map((v) => [r2(v.x), r2(v.z)]),
+    parks: parks.map((p) => [r2(p.x), r2(p.z)]),
+  };
+}
+
+function applyGame(d) {
+  if (!d || typeof d !== 'object') return;
+  const num = (v, def) => (typeof v === 'number' && Number.isFinite(v) ? v : def);
+  const count = (v) => Math.max(0, Math.floor(num(v, 0)));
+
+  state.day = Math.max(1, Math.floor(num(d.day, 1)));
+  state.tod = clamp(num(d.tod, 8), 0, 23.99);
+  state.lastHour = Math.floor(state.tod);
+  state.hunger = clamp(num(d.hunger, 100), 0, 100);
+  state.stamina = clamp(num(d.stamina, 100), 0, 100);
+  state.lemons = count(d.lemons);
+  state.pets = count(d.pets);
+  state.fed = count(d.fed);
+  state.inv = Array.from({ length: SLOTS }, (_, i) => {
+    const s = Array.isArray(d.inv) ? d.inv[i] : null;
+    return s && ITEMS[s.type] ? { type: s.type, n: clamp(Math.floor(num(s.n, 1)), 1, MAX_STACK) } : null;
+  });
+  state.sel = clamp(Math.floor(num(d.sel, 0)), 0, SLOTS - 1);
+  state.eatT = 0;
+  goal = null;
+  clearWaypoint();
+
+  if (d.player) {
+    player.x = num(d.player.x, player.x);
+    player.z = num(d.player.z, player.z);
+    player.yaw = num(d.player.yaw, player.yaw);
+  }
+  const place = (list, saved) => {
+    if (!Array.isArray(saved)) return;
+    saved.forEach((p, i) => {
+      if (list[i] && Array.isArray(p)) movePoi(list[i], num(p[0], list[i].x), num(p[1], list[i].z));
+    });
+  };
+  place(vets, d.vets);
+  place(parks, d.parks);
+
+  for (const s of Array.isArray(d.animals) ? d.animals : []) {
+    const a = animalList.find((x) => x.kind === s.kind);
+    if (!a) continue;
+    a.x = num(s.x, a.x);
+    a.z = num(s.z, a.z);
+    a.friend = clamp(num(s.friend, a.friend), 0, 100);
+    a.lastVet = Math.max(1, Math.floor(num(s.lastVet, 1)));
+    a.sick = !!s.sick;
+    a.dueNotified = false;
+    a.state = 'idle';
+    a.timer = 1;
+    a.park = null;
+    a.plate = null;
+    a.target = null;
+    a.home = { x: a.x, z: a.z, r: 3 };
+  }
+  for (const p of plates) setPlateFood(p, false);
+
+  while (torches.length) removeTorch(torches[0]);
+  for (const t of Array.isArray(d.torches) ? d.torches : []) {
+    if (Array.isArray(t) && torches.length < MAX_TORCHES) spawnTorch(num(t[0], 0), num(t[1], 0));
+  }
+
+  picked.clear();
+  for (const k of Array.isArray(d.picked) ? d.picked : []) if (typeof k === 'string') picked.add(k);
+  for (const c of chunks.values()) disposeChunk(c);
+  chunks.clear();
+  updateChunks(true);
+
+  camera.position.set(player.x, 4, player.z + 6);
+  renderInv();
+  refreshHud();
+}
+
+/* ====================================================================
+   Badges (written to gameProfiles/{uid}; they need a My Day sign in)
+   ==================================================================== */
+const BADGES = [
+  { id: 'lemon_1', icon: '🍋', name: 'If you have lemons, make lemonade!', rarity: 'Common', desc: 'Collect your first lemon.', test: () => state.lemons >= 1 },
+  { id: 'lemon_2', icon: '🐾', name: 'Pet me', rarity: 'Rare', desc: 'Pet an animal in the game.', test: () => state.pets >= 1 },
+  { id: 'lemon_secret', icon: '🌟', name: 'The Real Truth', rarity: 'Legendary', desc: 'After all...', secret: true, test: () => state.day >= 15 },
+];
+
+/* ====================================================================
+   My Day account: sign in, load, save (manual + every 2 minutes), sign out
+   ==================================================================== */
+const AUTOSAVE_MS = 2 * 60 * 1000;
+const account = {
+  user: null,
+  ready: false,        // true once the cloud save was loaded (or created)
+  busy: false,
+  lastSaved: null,
+  badges: {},
+  badgesDirty: false,
+  badgeRetryAt: 0,
+  status: '',
+  error: '',
+  timer: null,
+};
+
+function renderAccount() {
+  const signedIn = !!account.user;
+  const btn = $('mydayBtn');
+  if (signedIn) {
+    let note = 'signed in';
+    if (account.busy) note = 'syncing…';
+    else if (account.lastSaved) note = `saved ${account.lastSaved.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+    btn.textContent = `☁ ${account.user.username} · ${note}`;
+  } else {
+    btn.textContent = '☁ Save progress with My Day';
+  }
+  $('mdSignedOut').classList.toggle('hidden', signedIn);
+  $('mdSignedIn').classList.toggle('hidden', !signedIn);
+  if (signedIn) $('mdUser').textContent = account.user.username;
+  $('mdStatus').textContent = account.status;
+  $('mdError').textContent = account.error;
+  $('mdSignIn').disabled = account.busy;
+  $('mdSaveNow').disabled = account.busy || !account.ready;
+  const canRetry = !account.busy && ((signedIn && !account.ready) || (!signedIn && MyDay.hasStoredSession()));
+  $('mdRetry').classList.toggle('hidden', !canRetry);
+  $('mdBadgeNote').classList.toggle('hidden', signedIn);
+  renderBadges();
+}
+
+function renderBadges() {
+  const list = $('mdBadges');
+  list.textContent = '';
+  for (const b of BADGES) {
+    const unlocked = !!account.badges[b.id] && !!account.user;
+    const hidden = b.secret && !unlocked;
+    const li = document.createElement('li');
+    li.className = `badge ${unlocked ? 'unlocked' : 'locked'} rarity-${b.rarity.toLowerCase()}`;
+    const icon = document.createElement('span');
+    icon.className = 'badge-icon';
+    icon.textContent = hidden ? '❓' : b.icon;
+    const text = document.createElement('div');
+    const name = document.createElement('b');
+    name.textContent = hidden ? '???' : b.name;
+    const meta = document.createElement('small');
+    meta.textContent = hidden ? '???' : `${b.rarity} · ${b.desc}`;
+    text.append(name, meta);
+    const tag = document.createElement('span');
+    tag.className = 'badge-tag';
+    tag.textContent = unlocked ? 'Unlocked' : 'Locked';
+    li.append(icon, text, tag);
+    list.append(li);
+  }
+}
+
+function openAccount() {
+  account.error = '';
+  renderAccount();
+  $('mydayOverlay').classList.remove('hidden');
+  if (!account.user) setTimeout(() => $('mdUsername').focus(), 50);
+}
+function closeAccount() {
+  $('mydayOverlay').classList.add('hidden');
+}
+
+async function saveToCloud(quiet) {
+  if (!account.user) return false;
+  try {
+    account.lastSaved = await MyDay.writeSave(serializeGame());
+    account.status = `Saved at ${account.lastSaved.toLocaleTimeString()}.`;
+    account.error = '';
+    if (!quiet) toast('Progress saved to My Day ☁');
+    return true;
+  } catch (e) {
+    account.error = e.message;
+    if (e.expired) handleExpired();
+    else if (!quiet) toast(e.message);
+    return false;
+  } finally {
+    renderAccount();
+  }
+}
+
+// Runs after a sign in or a restored session: load the cloud save, or create it from the current game.
+async function connectAccount() {
+  account.busy = true;
+  account.ready = false;
+  account.error = '';
+  account.status = 'Loading your progress…';
+  renderAccount();
+  try {
+    const save = await MyDay.loadSave();
+    if (save) {
+      applyGame(save);
+      account.status = 'Progress loaded from My Day.';
+      toast(`Welcome back, ${account.user.username}! Progress loaded ☁`);
+    } else {
+      account.lastSaved = await MyDay.writeSave(serializeGame());
+      account.status = 'Your progress is now saved to My Day.';
+      toast(`Signed in as ${account.user.username}. Progress saved ☁`);
+    }
+    account.badges = await MyDay.loadBadges();
+    account.ready = true;
+    startAutosave();
+    await checkBadges();
+  } catch (e) {
+    account.status = '';
+    account.error = `${e.message} Your game was not changed.`;
+    if (e.expired) handleExpired();
+  } finally {
+    account.busy = false;
+    renderAccount();
+  }
+}
+
+function startAutosave() {
+  clearInterval(account.timer);
+  account.timer = setInterval(() => {
+    if (account.user && account.ready && !account.busy) saveToCloud(true);
+  }, AUTOSAVE_MS);
+}
+
+function handleExpired() {
+  clearInterval(account.timer);
+  account.user = null;
+  account.ready = false;
+  account.badges = {};
+  account.error = 'Your My Day session has expired. Please sign in again.';
+  renderAccount();
+}
+
+async function submitSignIn(e) {
+  e.preventDefault();
+  if (account.busy) return;
+  const username = MyDay.normalizeUsername($('mdUsername').value);
+  const password = $('mdPassword').value;
+  const problem = MyDay.validate(username, password);
+  if (problem) {
+    account.error = problem;
+    renderAccount();
+    return;
+  }
+  account.busy = true;
+  account.error = '';
+  account.status = 'Signing in…';
+  renderAccount();
+  try {
+    account.user = await MyDay.signIn(username, password);
+    $('mdPassword').value = '';
+  } catch (err) {
+    account.busy = false;
+    account.status = '';
+    account.error = err.message;
+    renderAccount();
+    return;
+  }
+  account.busy = false;
+  await connectAccount();
+}
+
+function signOutAccount() {
+  MyDay.signOut();
+  clearInterval(account.timer);
+  account.user = null;
+  account.ready = false;
+  account.lastSaved = null;
+  account.badges = {};
+  account.badgesDirty = false;
+  account.status = '';
+  account.error = '';
+  renderAccount();
+  toast('Signed out of My Day. You can keep playing.');
+}
+
+// Awards badges while signed in and writes them to gameProfiles/{uid}.
+async function checkBadges() {
+  if (!account.user || !account.ready) return;
+  const won = [];
+  for (const b of BADGES) {
+    if (!account.badges[b.id] && b.test()) {
+      account.badges[b.id] = true;
+      won.push(b);
+    }
+  }
+  if (won.length) {
+    account.badgesDirty = true;
+    for (const b of won) {
+      SFX.chime();
+      toast(`🏅 Badge unlocked: ${b.name} (${b.rarity})`);
+      bubble('🏅', player.x, 1.6, player.z, { size: 64, bg: false, life: 1.6 });
+    }
+    renderAccount();
+  }
+  if (account.badgesDirty && Date.now() >= account.badgeRetryAt) {
+    account.badgesDirty = false;
+    try {
+      await MyDay.writeBadges(account.badges);
+    } catch (e) {
+      account.badgesDirty = true;
+      account.badgeRetryAt = Date.now() + 30000;
+      if (e.expired) handleExpired();
+    }
+  }
+}
+
+function setupAccount() {
+  $('mydayBtn').addEventListener('click', () => { ensureAudio(); openAccount(); });
+  $('mdClose').addEventListener('click', closeAccount);
+  $('mdForm').addEventListener('submit', submitSignIn);
+  $('mdCreate').addEventListener('click', () => window.open(MyDay.SIGNUP_URL, '_blank', 'noopener'));
+  $('mdSaveNow').addEventListener('click', () => saveToCloud(false));
+  $('mdSignOut').addEventListener('click', signOutAccount);
+  $('mdRetry').addEventListener('click', () => (account.user ? connectAccount() : restoreAccount()));
+  renderAccount();
+  if (MyDay.hasStoredSession()) restoreAccount();
+}
+
+async function restoreAccount() {
+  account.busy = true;
+  account.status = 'Signing in to My Day…';
+  renderAccount();
+  try {
+    account.user = await MyDay.restoreSession();
+  } catch (e) {
+    account.error = e.message;
+  }
+  account.busy = false;
+  account.status = '';
+  if (account.user) await connectAccount();
+  else renderAccount();
+}
+
+/* ====================================================================
    HUD
    ==================================================================== */
 let hudT = 0;
@@ -3000,7 +3374,13 @@ function setupInput() {
   canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 
   const keyMap = { KeyW: 'up', ArrowUp: 'up', KeyS: 'down', ArrowDown: 'down', KeyA: 'left', ArrowLeft: 'left', KeyD: 'right', ArrowRight: 'right' };
+  const typing = (e) => e.target && /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName);
   window.addEventListener('keydown', (e) => {
+    if (e.code === 'Escape' && !$('mydayOverlay').classList.contains('hidden')) {
+      closeAccount();
+      return;
+    }
+    if (typing(e)) return;
     if (e.code === 'ShiftLeft' || e.code === 'ShiftRight') state.sprintKey = true;
     const k = keyMap[e.code];
     if (k) {
@@ -3017,6 +3397,7 @@ function setupInput() {
     if (e.code === 'Escape' && mapView.open) closeMap();
   });
   window.addEventListener('keyup', (e) => {
+    if (typing(e)) return;
     if (e.code === 'ShiftLeft' || e.code === 'ShiftRight') state.sprintKey = false;
     const k = keyMap[e.code];
     if (k) dirs.delete(k);
@@ -3163,6 +3544,7 @@ function frame(now) {
   if (hudT <= 0) {
     hudT = 0.12;
     refreshHud();
+    checkBadges();
   }
   renderer.render(scene, camera);
 }
@@ -3253,6 +3635,7 @@ async function init() {
   buildWorld();
   boot.stage('setting up input');
   setupInput();
+  setupAccount();
   lastFrame = performance.now();
   renderInv();
   refreshHud();

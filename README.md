@@ -31,12 +31,28 @@ Written with Three.js and no build step, so it runs directly on GitHub Pages.
 | --- | --- |
 | `index.html` | Page, UI text, styles, on-screen arrows, boot loader with diagnostics |
 | `vendor/three.module.min.js` | Three.js r160 (MIT, see `vendor/THREE-LICENSE.txt`), served from the same site |
-| `game.js` | The whole game: endless world, 3D animals, crows, sounds, controls |
+| `game.js` | The whole game: endless world, 3D animals, crows, sounds, controls, save data and badges |
+| `myday.js` | My Day account link: sign in, session refresh, Firestore save/load and badges (REST) |
 | `assets/dog-face.jpg`, `assets/dog-coat.jpg` | Dog face and coat, cropped from the original photo |
 | `assets/cat-face.jpg`, `assets/cat-coat.jpg` | Cat face and coat, cropped from the original photo |
 | `assets/*-cutout-reference.jpg` | Full cropped animal photos (reference) |
 
 Sounds are generated in the browser with the Web Audio API, so there are no external audio files.
+
+## Save progress with My Day
+
+The game works without an account. Signing in with a My Day account adds cloud saves and badges.
+
+- **Save progress with My Day** (in the top-left panel) opens the sign in form: username and password of a My Day account. **Create account** opens https://myday.projectlemon.net/ in a new tab.
+- On sign in, the save in `gameSaves/{uid}` is loaded. If there is none, the current progress is saved there.
+- Progress is saved with **Save now** and automatically every 2 minutes while signed in. The session stays after a reload until **Sign out**, which only ends the game's session.
+- Firestore documents written by the game:
+  - `gameSaves/{uid}`: `data` (JSON string of the game state) and `savedAt` (timestamp)
+  - `gameProfiles/{uid}`: `lemon_1`, `lemon_2`, `lemon_secret` (`true` once earned, never reset) and `updatedAt`
+- Badges (earned while signed in):
+  - 🍋 **If you have lemons, make lemonade!** (Common): collect your first lemon
+  - 🐾 **Pet me** (Rare): pet an animal
+  - 🌟 **The Real Truth** (Legendary, secret): reach day 15. Shown as "???" until earned.
 
 ## Supported browsers
 
@@ -61,7 +77,7 @@ info and network checks. Tap **Copy report** and share it. Add `?debug=1` to the
 
 1. On GitHub, go to **Settings → Pages**.
 2. Under **Build and deployment**, choose **Deploy from a branch**.
-3. Pick the branch with the game (for example `main`, or `claude/jolly-maxwell-szh7bq`) and the `/ (root)` folder.
+3. Pick the `main` branch and the `/ (root)` folder.
 4. After a few minutes the game is at `https://<user>.github.io/LemonGame/`.
 
 All paths are relative (`./game.js`, `./assets/...`), so it also works from a subfolder.
