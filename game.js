@@ -97,7 +97,7 @@ const EAT_TIME = 1.4;
 const NAMES = { dog: 'Capi', cat: 'June' };
 const RANGE = {
   food: 2.6, shed: 2.6, juneshop: 2.6, chest: 2.3, bed: 2.0, plate: 1.9, dog: 2.1, cat: 2.1,
-  crow: 3.2, lemon: 0.9, torch: 1.6, vet: 4.6, walk: 0.3, placeTorch: 0.8, waypoint: 1.5,
+  crow: 3.2, lemon: 0.9, torch: 1.6, vet: 4.6, walk: 0.3, placeTorch: 0.8, waypoint: 1.5, ruin: 3.0,
 };
 const LABELS = {
   food: 'Take Capi food',
@@ -112,6 +112,7 @@ const LABELS = {
   lemon: 'Pick up lemon',
   torch: 'Pick up torch',
   vet: 'Vet clinic',
+  ruin: 'Abandoned Chest Shop',
 };
 const FOOD_REF = { x: HOUSE.x, z: HOUSE.z };
 const SHED_REF = { x: SHED.x, z: SHED.z };
@@ -348,6 +349,10 @@ const SFX = {
     }
   },
   click() { tone({ type: 'square', f0: 1500, f1: 900, dur: 0.05, vol: 0.06 }); },
+  hammer(sp) {
+    tone({ type: 'square', f0: 1000, f1: 700, dur: 0.05, vol: 0.08, sp });
+    noise({ dur: 0.04, vol: 0.12, f: 3500, q: 1.5, sp });
+  },
   thunder() { noise({ dur: 2.2, vol: 0.35, f: 120, q: 0.7, type: 'lowpass' }); },
   fire(sp) {
     noise({ dur: 0.35, vol: 0.18, f: 900, q: 0.5, sp });
@@ -437,7 +442,11 @@ function signTexture(text, bg = '#f4e4b4', fg = '#3b2412', border = '#5a3a1e') {
   g.lineWidth = 10;
   g.strokeRect(6, 6, 500, 116);
   g.fillStyle = fg;
-  g.font = '800 70px system-ui, -apple-system, sans-serif';
+  let size = 70;
+  do {
+    g.font = `800 ${size}px system-ui, -apple-system, sans-serif`;
+    size -= 2;
+  } while (g.measureText(text).width > 460 && size > 20);
   g.textAlign = 'center';
   g.textBaseline = 'middle';
   g.fillText(text, 256, 68);
@@ -515,6 +524,15 @@ function buildMaterials(imgs) {
   mats.signChest = std(0xffffff, { map: signTexture('Chest Shop', '#fff2d6', '#5a2d0c', '#a0521d'), roughness: 0.8 });
   mats.signVet = std(0xffffff, { map: signTexture('✚ VET', '#ffffff', '#d32f2f', '#d32f2f'), roughness: 0.8 });
   mats.signPark = std(0xffffff, { map: signTexture('PET PARK', '#e8ffe0', '#1f6b1f', '#2e8b2e'), roughness: 0.8 });
+  mats.signAbandoned = std(0xffffff, { map: signTexture('ABANDONED', '#b8b0a0', '#4a4036', '#5e5245'), roughness: 1 });
+  mats.signWip = std(0xffffff, { map: signTexture('WORK IN PROGRESS', '#ffcc00', '#111111', '#111111'), roughness: 0.7, side: THREE.DoubleSide });
+  mats.ruinWood = std(0x6e5d4b, { roughness: 1 });
+  mats.ruinCloth = std(0x8f6a52, { roughness: 1, side: THREE.DoubleSide });
+  mats.steel = std(0x9aa3ad, { roughness: 0.4, metalness: 0.5 });
+  mats.crane = std(0xf2b705, { roughness: 0.5 });
+  mats.cone = std(0xff6a00, { roughness: 0.6 });
+  mats.hardHat = std(0xff9800, { roughness: 0.4 });
+  mats.vest = std(0xff6d00, { roughness: 0.7, side: THREE.DoubleSide });
   mats.ridge = new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.DoubleSide, fog: false });
   mats.spruce = new THREE.MeshBasicMaterial({ color: 0xffffff, fog: false });
   mats.monkWall = new THREE.MeshBasicMaterial({ color: 0xf1e7c8, fog: false });
@@ -616,6 +634,9 @@ function buildGeometry() {
   geo.flame = new THREE.ConeGeometry(0.09, 0.28, 8);
   geo.flameCore = new THREE.ConeGeometry(0.045, 0.16, 6);
   geo.post = new THREE.CylinderGeometry(0.06, 0.06, 1.0, 6);
+  geo.hat = new THREE.SphereGeometry(1, 14, 8, 0, TAU, 0, Math.PI / 2);
+  geo.brim = new THREE.CylinderGeometry(0.27, 0.27, 0.03, 16);
+  geo.pole = new THREE.CylinderGeometry(0.04, 0.04, 2.8, 6);
 }
 
 /* ====================================================================
@@ -1227,54 +1248,425 @@ function buildShop({ pos, rot, wall, roof, sign, kind, ref, icon, label }) {
   addPoi({ type: 'shop', x: pos.x, z: pos.z, icon, label, clear: 7 });
 }
 
+/* ====================================================================
+   Chest Shop: abandoned at first; renovate it with 7 lemons
+   ==================================================================== */
+const RENOVATE_COST = 7;
+const BUILD_TIME = 35;
+const RENOVATE_RANGE = 4.5;
+const SHOP_ROT = 0.2;
+const chestShop = {
+  status: 'abandoned', // 'abandoned' | 'building' | 'open'
+  left: 0,
+  normal: null,
+  ruin: null,
+  site: null,
+  jib: null,
+  cable: null,
+  hook: null,
+  workers: [],
+  poi: null,
+  near: false,
+  dismissed: false,
+  hammerT: 0,
+  chipText: '',
+};
+let chestLid = null;
+let chestOpenT = 0;
+
+// A point around the shop, given in the shop's own coordinates.
+function shopPoint(lx, lz) {
+  const c = Math.cos(SHOP_ROT);
+  const s = Math.sin(SHOP_ROT);
+  return { x: CHEST_SHOP.x + lx * c + lz * s, z: CHEST_SHOP.z - lx * s + lz * c };
+}
+
 function buildChestShop() {
   const g = new THREE.Group();
   g.position.set(CHEST_SHOP.x, 0, CHEST_SHOP.z);
-  g.rotation.y = 0.2;
+  g.rotation.y = SHOP_ROT;
   scene.add(g);
-  const counter = new THREE.Mesh(new THREE.BoxGeometry(2.3, 0.9, 0.9), mats.wood);
-  counter.position.set(0, 0.45, 0);
-  g.add(counter);
+  const box = (parent, w, h, d, m, x, y, z) => {
+    const mm = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), m);
+    mm.position.set(x, y, z);
+    parent.add(mm);
+    return mm;
+  };
+
+  // the renovated stall (grows from the ground while it is being built)
+  const normal = new THREE.Group();
+  box(normal, 2.3, 0.9, 0.9, mats.wood, 0, 0.45, 0);
   for (const x of [-1.1, 1.1]) {
     const post = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 2.2, 6), mats.darkWood);
     post.position.set(x, 1.1, -0.35);
-    g.add(post);
+    normal.add(post);
   }
-  const awning = new THREE.Mesh(new THREE.BoxGeometry(2.7, 0.08, 1.5), mats.awning);
-  awning.position.set(0, 2.2, 0.15);
+  const awning = box(normal, 2.7, 0.08, 1.5, mats.awning, 0, 2.2, 0.15);
   awning.rotation.x = 0.25;
-  g.add(awning);
   const sign = new THREE.Mesh(new THREE.PlaneGeometry(1.9, 0.47), mats.signChest);
   sign.position.set(0, 1.85, -0.32);
-  g.add(sign);
-  // the chest with torches
+  normal.add(sign);
   const chest = new THREE.Group();
   chest.position.set(0.2, 0.9, 0.05);
-  const base = new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.42, 0.5), mats.darkWood);
-  base.position.y = 0.21;
-  const lid = new THREE.Mesh(new THREE.BoxGeometry(0.82, 0.16, 0.52), mats.wood2);
-  lid.position.y = 0.5;
-  const band = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.6, 0.53), mats.brass);
-  band.position.y = 0.3;
-  const lock = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.12, 0.04), mats.brass);
-  lock.position.set(0, 0.38, 0.27);
-  chest.add(base, lid, band, lock);
+  const base = box(chest, 0.8, 0.42, 0.5, mats.darkWood, 0, 0.21, 0);
+  const lid = box(chest, 0.82, 0.16, 0.52, mats.wood2, 0, 0.5, 0);
+  const band = box(chest, 0.1, 0.6, 0.53, mats.brass, 0, 0.3, 0);
+  const lock = box(chest, 0.12, 0.12, 0.04, mats.brass, 0, 0.38, 0.27);
   for (const m of [base, lid, band, lock]) pickable(m, 'chest', CHEST_REF);
-  g.add(chest);
+  normal.add(chest);
   chestLid = lid;
-  // torches on display
   for (const x of [-0.8, -0.55]) {
     const t = buildTorchMesh(false);
     t.position.set(x, 0.9, 0.1);
     t.rotation.z = 0.15;
     t.scale.setScalar(0.8);
-    g.add(t);
+    normal.add(t);
   }
+  g.add(normal);
+  chestShop.normal = normal;
+
+  // the abandoned ruin
+  const ruin = new THREE.Group();
+  const parts = [];
+  const rc = box(ruin, 2.3, 0.75, 0.9, mats.ruinWood, 0.05, 0.36, 0);
+  rc.rotation.z = 0.07;
+  parts.push(rc);
+  const post1 = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 1.5, 6), mats.darkWood);
+  post1.position.set(-1.1, 0.75, -0.35);
+  post1.rotation.z = 0.12;
+  const post2 = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 2.2, 6), mats.darkWood);
+  post2.position.set(1.5, 0.1, -0.1);
+  post2.rotation.set(0, 0.3, Math.PI / 2 - 0.15);
+  ruin.add(post1, post2);
+  parts.push(post1, post2);
+  const cloth = box(ruin, 2.7, 0.06, 1.5, mats.ruinCloth, 0.3, 0.2, 1.05);
+  cloth.rotation.set(0.3, 0, -0.18);
+  const plank1 = box(ruin, 1.5, 0.07, 0.22, mats.ruinWood, -1.3, 0.04, 0.9);
+  plank1.rotation.y = 0.7;
+  const plank2 = box(ruin, 1.1, 0.07, 0.22, mats.ruinWood, 1.0, 0.04, 1.6);
+  plank2.rotation.y = -0.4;
+  const oldChest = box(ruin, 0.8, 0.42, 0.5, mats.ruinWood, -0.6, 0.21, 1.0);
+  oldChest.rotation.y = 0.4;
+  const oldLid = box(ruin, 0.82, 0.12, 0.52, mats.ruinWood, -0.15, 0.06, 1.55);
+  oldLid.rotation.set(0.2, 0.9, 0);
+  const rSign = new THREE.Mesh(new THREE.PlaneGeometry(1.9, 0.47), mats.signAbandoned);
+  rSign.position.set(0.05, 0.45, 0.47);
+  rSign.rotation.z = -0.08;
+  ruin.add(rSign);
+  parts.push(cloth, plank1, plank2, oldChest, oldLid, rSign);
+  for (const m of parts) pickable(m, 'ruin', CHEST_REF);
+  g.add(ruin);
+  chestShop.ruin = ruin;
+
+  // the building site: scaffolding, a mini crane and a work in progress sign
+  const site = new THREE.Group();
+  for (const x of [-1.5, 0, 1.5]) {
+    for (const z of [-0.95, 0.95]) {
+      const p = new THREE.Mesh(geo.pole, mats.steel);
+      p.position.set(x, 1.4, z);
+      site.add(p);
+    }
+  }
+  for (const y of [1.25, 2.5]) {
+    for (const z of [-0.95, 0.95]) box(site, 3.1, 0.05, 0.05, mats.steel, 0, y, z);
+    for (const x of [-1.5, 1.5]) box(site, 0.05, 0.05, 1.95, mats.steel, x, y, 0);
+  }
+  for (const z of [-0.95, 0.95]) box(site, 3.1, 0.06, 0.4, mats.wood, 0, 1.28, z);
+
+  const crane = new THREE.Group();
+  crane.position.set(2.9, 0, -1.4);
+  box(crane, 0.9, 0.3, 0.9, mats.crane, 0, 0.15, 0);
+  box(crane, 0.2, 4.2, 0.2, mats.crane, 0, 2.4, 0);
+  const jib = new THREE.Group();
+  jib.position.y = 4.5;
+  box(jib, 3.4, 0.16, 0.16, mats.crane, -1.2, 0, 0);
+  box(jib, 0.5, 0.4, 0.4, mats.steel, 0.65, -0.1, 0);
+  box(jib, 0.35, 0.35, 0.35, mats.steel, 0, -0.25, 0.25);
+  const cable = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.012, 1, 4), mats.steel);
+  cable.position.x = -2.6;
+  const hook = box(jib, 0.18, 0.14, 0.18, mats.steel, -2.6, -1.2, 0);
+  jib.add(cable);
+  crane.add(jib);
+  site.add(crane);
+  chestShop.jib = jib;
+  chestShop.cable = cable;
+  chestShop.hook = hook;
+
+  const wip = new THREE.Group();
+  wip.position.set(-0.4, 0, 2.1);
+  const board = new THREE.Mesh(new THREE.PlaneGeometry(1.7, 0.55), mats.signWip);
+  board.position.y = 1.1;
+  wip.add(board);
+  for (const x of [-0.7, 0.7]) {
+    const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 1.1, 6), mats.steel);
+    leg.position.set(x, 0.55, -0.02);
+    wip.add(leg);
+  }
+  site.add(wip);
+  for (const [x, z] of [[0.9, 2.0], [-1.6, 1.9], [1.9, 1.2]]) {
+    const cone = new THREE.Mesh(new THREE.ConeGeometry(0.15, 0.4, 10), mats.cone);
+    cone.position.set(x, 0.2, z);
+    site.add(cone);
+  }
+  g.add(site);
+  chestShop.site = site;
+
   shadowAll(g);
-  addPoi({ type: 'shop', x: CHEST_SHOP.x, z: CHEST_SHOP.z, icon: '🧰', label: 'Chest Shop', clear: 6 });
+  chestShop.poi = addPoi({ type: 'shop', x: CHEST_SHOP.x, z: CHEST_SHOP.z, icon: '🏚', label: 'Abandoned shop', clear: 6 });
+  setChestShopStatus('abandoned', 0);
 }
-let chestLid = null;
-let chestOpenT = 0;
+
+function setChestShopStatus(status, left = 0) {
+  chestShop.status = status;
+  chestShop.left = left;
+  chestShop.ruin.visible = status === 'abandoned';
+  chestShop.normal.visible = status !== 'abandoned';
+  chestShop.normal.scale.y = status === 'building' ? 0.1 + 0.9 * (1 - left / BUILD_TIME) : 1;
+  chestShop.site.visible = status === 'building';
+  const poi = chestShop.poi;
+  if (status === 'abandoned') {
+    poi.icon = '🏚';
+    poi.label = 'Abandoned shop';
+  } else if (status === 'building') {
+    poi.icon = '🚧';
+    poi.label = 'Renovating…';
+  } else {
+    poi.icon = '🧰';
+    poi.label = 'Chest Shop';
+  }
+  hideRenovatePopup();
+  updateBuildChip();
+}
+
+function countItem(type) {
+  return state.inv.reduce((n, s) => n + (s && s.type === type ? s.n : 0), 0);
+}
+
+function takeItems(type, n) {
+  for (let i = 0; i < SLOTS && n > 0; i++) {
+    const s = state.inv[i];
+    if (s && s.type === type) {
+      const k = Math.min(n, s.n);
+      s.n -= k;
+      n -= k;
+      if (s.n <= 0) state.inv[i] = null;
+    }
+  }
+  renderInv();
+}
+
+function showRenovatePopup() {
+  $('rnHave').textContent = `(you have ${countItem('lemon')})`;
+  $('renovatePop').classList.remove('hidden');
+}
+function hideRenovatePopup() {
+  $('renovatePop').classList.add('hidden');
+}
+
+function lemonHint() {
+  const have = countItem('lemon');
+  toast(`This Chest Shop is abandoned. Bring ${RENOVATE_COST} lemons to renovate it (you have ${have}).`);
+}
+
+function startRenovation() {
+  if (chestShop.status !== 'abandoned') return;
+  if (countItem('lemon') < RENOVATE_COST) {
+    hideRenovatePopup();
+    lemonHint();
+    return;
+  }
+  takeItems('lemon', RENOVATE_COST);
+  setChestShopStatus('building', BUILD_TIME);
+  spawnWorkers(false);
+  setJuneWork(true);
+  SFX.chime();
+  toast('Renovation started! June and the lemon builders are on their way 🔨');
+}
+
+function finishRenovation() {
+  setChestShopStatus('open', 0);
+  for (const w of chestShop.workers) w.mode = 'out';
+  setJuneWork(false);
+  SFX.chime();
+  bubble('✨ Done!', CHEST_SHOP.x, 3, CHEST_SHOP.z, { life: 2 });
+  toast('The Chest Shop is renovated! Open the chest to get torches 🔥');
+}
+
+function updateBuildChip() {
+  const chip = $('buildChip');
+  if (chestShop.status !== 'building') {
+    chip.classList.add('hidden');
+    chestShop.chipText = '';
+    return;
+  }
+  const s = Math.max(0, Math.ceil(chestShop.left));
+  const text = `🚧 Renovating the Chest Shop · ${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+  if (text !== chestShop.chipText) {
+    chip.textContent = text;
+    chestShop.chipText = text;
+  }
+  chip.classList.remove('hidden');
+}
+
+function updateChestShop(dt) {
+  if (chestShop.status === 'abandoned') {
+    const near = Math.hypot(player.x - CHEST_SHOP.x, player.z - CHEST_SHOP.z) < RENOVATE_RANGE;
+    const enough = countItem('lemon') >= RENOVATE_COST;
+    if (near && !chestShop.near && !enough) lemonHint();
+    if (!near) chestShop.dismissed = false;
+    if (near && enough && !chestShop.dismissed) {
+      if ($('renovatePop').classList.contains('hidden')) showRenovatePopup();
+    } else if (!$('renovatePop').classList.contains('hidden')) {
+      hideRenovatePopup();
+    }
+    chestShop.near = near;
+  } else if (chestShop.status === 'building') {
+    chestShop.left = Math.max(0, chestShop.left - dt);
+    chestShop.normal.scale.y = 0.1 + 0.9 * (1 - chestShop.left / BUILD_TIME);
+    chestShop.jib.rotation.y = Math.sin(T * 0.35) * 1.1;
+    const L = 1.2 + Math.sin(T * 0.8) * 0.6;
+    chestShop.cable.scale.y = L;
+    chestShop.cable.position.y = -L / 2;
+    chestShop.hook.position.y = -L - 0.07;
+    chestShop.hammerT -= dt;
+    if (chestShop.hammerT <= 0 && chestShop.workers.some((w) => w.mode === 'work')) {
+      chestShop.hammerT = rnd(0.3, 0.7);
+      SFX.hammer(spatial(CHEST_SHOP.x, CHEST_SHOP.z));
+    }
+    updateBuildChip();
+    if (chestShop.left <= 0) finishRenovation();
+  }
+  updateWorkers(dt);
+}
+
+/* ---------- lemon builders ---------- */
+function buildWorker() {
+  const g = new THREE.Group();
+  scene.add(g);
+  const body = new THREE.Mesh(geo.lemon, mats.lemon);
+  body.scale.setScalar(0.7);
+  body.position.y = 0.36;
+  g.add(body);
+  for (const sx of [-1, 1]) {
+    const w = new THREE.Mesh(geo.smallSphere, new THREE.MeshBasicMaterial({ color: 0xffffff }));
+    w.scale.setScalar(0.055);
+    w.position.set(sx * 0.09, 0.43, 0.21);
+    const p = new THREE.Mesh(geo.smallSphere, new THREE.MeshBasicMaterial({ color: 0x1a1a1a }));
+    p.scale.setScalar(0.028);
+    p.position.set(sx * 0.09, 0.43, 0.26);
+    g.add(w, p);
+  }
+  const hat = new THREE.Mesh(geo.hat, mats.hardHat);
+  hat.scale.set(0.2, 0.15, 0.2);
+  hat.position.y = 0.66;
+  const brim = new THREE.Mesh(geo.brim, mats.hardHat);
+  brim.position.y = 0.66;
+  g.add(hat, brim);
+  const arm = new THREE.Group();
+  arm.position.set(0.26, 0.4, 0.05);
+  const handle = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, 0.32, 6), mats.darkWood);
+  handle.position.y = 0.12;
+  const head = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.07, 0.07), mats.steel);
+  head.position.y = 0.27;
+  arm.add(handle, head);
+  g.add(arm);
+  shadowAll(g);
+  return { group: g, arm, blob: makeBlob(0.7), x: 0, z: 0, yaw: 0, moving: false, mode: 'in', spot: null, exit: null, ph: rnd(0, TAU) };
+}
+
+function clearWorkers() {
+  for (const w of chestShop.workers) {
+    scene.remove(w.group);
+    scene.remove(w.blob);
+  }
+  chestShop.workers.length = 0;
+}
+
+function spawnWorkers(atSpot) {
+  clearWorkers();
+  [-1, 1].forEach((side) => {
+    const w = buildWorker();
+    const spot = shopPoint(side * 1.3, 1.5);
+    const exit = shopPoint(side * 9, 9);
+    w.spot = spot;
+    w.exit = exit;
+    w.x = atSpot ? spot.x : exit.x;
+    w.z = atSpot ? spot.z : exit.z;
+    w.mode = atSpot ? 'work' : 'in';
+    chestShop.workers.push(w);
+  });
+}
+
+function updateWorkers(dt) {
+  const c = shopPoint(0, 0);
+  const ws = chestShop.workers;
+  for (let i = ws.length - 1; i >= 0; i--) {
+    const w = ws[i];
+    w.moving = false;
+    if (w.mode === 'in' || w.mode === 'out') {
+      const t = w.mode === 'in' ? w.spot : w.exit;
+      if (stepTo(w, t.x, t.z, 2.4, dt, 0.1)) {
+        if (w.mode === 'in') {
+          w.mode = 'work';
+        } else {
+          scene.remove(w.group);
+          scene.remove(w.blob);
+          ws.splice(i, 1);
+          continue;
+        }
+      }
+    }
+    let y = 0;
+    if (w.mode === 'work') {
+      w.yaw = angleLerp(w.yaw, Math.atan2(c.x - w.x, c.z - w.z), Math.min(1, dt * 5));
+      const swing = Math.abs(Math.sin(T * 7 + w.ph));
+      w.arm.rotation.x = -swing * 1.4;
+      y = swing * 0.03;
+    } else {
+      w.arm.rotation.x = 0;
+      if (w.moving) y = Math.abs(Math.sin(T * 11 + w.ph)) * 0.06;
+    }
+    w.group.position.set(w.x, y, w.z);
+    w.group.rotation.y = w.yaw;
+    w.blob.position.set(w.x, 0.01, w.z);
+  }
+}
+
+/* ---------- June in her work outfit ---------- */
+function setJuneCostume(on) {
+  const cat = animals.cat;
+  if (!cat.costume && on) {
+    const hat = new THREE.Mesh(geo.hat, mats.hardHat);
+    hat.scale.set(0.2, 0.16, 0.2);
+    hat.position.set(0, 0.19, 0);
+    const brim = new THREE.Mesh(geo.brim, mats.hardHat);
+    brim.scale.set(0.9, 1, 0.9);
+    brim.position.set(0, 0.19, 0);
+    cat.head.add(hat, brim);
+    const vest = new THREE.Mesh(new THREE.CylinderGeometry(0.36, 0.36, 0.3, 18, 1, true), mats.vest);
+    vest.rotation.x = Math.PI / 2;
+    vest.scale.set(1, 1, 0.82);
+    vest.position.set(0, cat.body.position.y, 0.12);
+    cat.holder.add(vest);
+    cat.costume = [hat, brim, vest];
+    shadowAll(cat.root);
+  }
+  if (cat.costume) for (const m of cat.costume) m.visible = on;
+}
+
+function setJuneWork(on) {
+  const cat = animals.cat;
+  setJuneCostume(on);
+  if (on) {
+    cat.state = 'work';
+    cat.park = null;
+    cat.target = null;
+  } else if (cat.state === 'work') {
+    cat.state = cat.plate && cat.plate.food ? 'plate' : 'idle';
+    cat.timer = 1;
+    cat.home = { x: cat.x, z: cat.z, r: 3 };
+  }
+}
 
 function buildTent() {
   const g = new THREE.Group();
@@ -1747,7 +2139,15 @@ function updateAnimal(a, dt, t) {
   const slow = needsVet(a) ? 0.65 : 1;
   const following = state.call && a.friend >= FOLLOW_MIN && !state.sleeping;
 
-  if (a.state === 'plate') {
+  if (a.state === 'work') {
+    // June helps renovate the Chest Shop
+    const spot = shopPoint(0.4, 1.9);
+    const c = shopPoint(0, 0);
+    if (stepTo(a, spot.x, spot.z, 2.8, dt, 0.15)) {
+      a.yaw = angleLerp(a.yaw, Math.atan2(c.x - a.x, c.z - a.z), Math.min(1, dt * 5));
+      if (Math.random() < dt * 0.4) a.happy = 0.8;
+    }
+  } else if (a.state === 'plate') {
     const p = a.plate;
     if (!p || !p.food) {
       a.state = 'idle';
@@ -2589,6 +2989,11 @@ function placeFood(p) {
   setPlateFood(p, true);
   SFX.place(spatial(p.x, p.z));
   const a = p.who === 'dog' ? animals.dog : animals.cat;
+  if (a.state === 'work') {
+    a.plate = p;
+    toast(`Food on the plate. ${a.name} will eat after the renovation.`);
+    return;
+  }
   toast(`Food on the plate. ${a.name} is coming!`);
   if (a.state !== 'eat') {
     a.state = 'plate';
@@ -2657,7 +3062,17 @@ function executeGoal(g) {
     case 'food': grabFood(); break;
     case 'shed': takeFromShed(); break;
     case 'juneshop': takeFromJuneShop(); break;
-    case 'chest': openChest(); break;
+    case 'chest':
+      if (chestShop.status === 'open') openChest();
+      break;
+    case 'ruin':
+      if (countItem('lemon') >= RENOVATE_COST) {
+        chestShop.dismissed = false;
+        showRenovatePopup();
+      } else {
+        lemonHint();
+      }
+      break;
     case 'bed': tryBed(); break;
     case 'plate': placeFood(g.ref); break;
     case 'dog':
@@ -2892,6 +3307,7 @@ function serializeGame() {
     picked: [...picked].slice(-3000),
     vets: vets.map((v) => [r2(v.x), r2(v.z)]),
     parks: parks.map((p) => [r2(p.x), r2(p.z)]),
+    chestShop: { status: chestShop.status, left: Math.round(chestShop.left * 10) / 10 },
   };
 }
 
@@ -2952,6 +3368,18 @@ function applyGame(d) {
   while (torches.length) removeTorch(torches[0]);
   for (const t of Array.isArray(d.torches) ? d.torches : []) {
     if (Array.isArray(t) && torches.length < MAX_TORCHES) spawnTorch(num(t[0], 0), num(t[1], 0));
+  }
+
+  // Chest Shop: abandoned, being renovated (continue the timer) or open. Older saves start abandoned.
+  clearWorkers();
+  const cs = d.chestShop || {};
+  const shopStatus = ['abandoned', 'building', 'open'].includes(cs.status) ? cs.status : 'abandoned';
+  setChestShopStatus(shopStatus, shopStatus === 'building' ? clamp(num(cs.left, BUILD_TIME), 0, BUILD_TIME) : 0);
+  if (shopStatus === 'building') {
+    spawnWorkers(true);
+    setJuneWork(true);
+  } else {
+    setJuneCostume(false);
   }
 
   picked.clear();
@@ -3273,8 +3701,13 @@ function toNDC(x, y) {
 function pickAt(x, y) {
   raycaster.setFromCamera(toNDC(x, y), camera);
   const hits = raycaster.intersectObjects([...pickables], false);
-  for (const h of hits) if (h.object.visible && h.object.userData.pick) return h.object;
+  for (const h of hits) if (isShown(h.object) && h.object.userData.pick) return h.object;
   return null;
+}
+// An object counts as visible only if it and all of its parents are visible.
+function isShown(o) {
+  for (let p = o; p; p = p.parent) if (!p.visible) return false;
+  return true;
 }
 function groundAt(x, y) {
   raycaster.setFromCamera(toNDC(x, y), camera);
@@ -3452,6 +3885,8 @@ function setupInput() {
     setWaypoint(x, z, true);
   });
   $('wpBtn').addEventListener('click', goToWaypoint);
+  $('rnGo').addEventListener('click', () => { ensureAudio(); startRenovation(); });
+  $('rnClose').addEventListener('click', () => { chestShop.dismissed = true; hideRenovatePopup(); });
 
   $('callBtn').addEventListener('click', () => { ensureAudio(); toggleCall(); });
   $('btnSound').addEventListener('click', () => {
@@ -3520,6 +3955,7 @@ function frame(now) {
   updateHealth();
   updateParks(dt);
   for (const c of crows) updateCrow(c, dt, T);
+  updateChestShop(dt);
   updateTorches(dt);
   updateFlyers(dt, T);
   updateRain(dt);

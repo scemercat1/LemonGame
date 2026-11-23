@@ -20,7 +20,7 @@ Written with Three.js and no build step, so it runs directly on GitHub Pages.
 - Pet Capi (dog) and June (cat) to raise their friendship; press **F** / **Call** and friends follow you.
 - Take your pets to a **vet** every 3 days, or when they get sick (random event).
 - Bring them to a **pet park**: they play there and gain friendship.
-- Open the **Chest Shop** chest for torches; place them on the ground to light the night.
+- The **Chest Shop** starts abandoned. Bring 7 lemons and tap **Renovate**: June (in a work outfit) and two lemon builders rebuild it in 35 seconds, with scaffolding, a mini crane and a work in progress sign. Then open its chest for torches and place them on the ground to light the night.
 - Collect lemons; select one and tap the screen (or press **E**) to eat it and fill the hunger bar.
 - Open the **map** (🗺, minimap or **M**), tap a spot to set a waypoint and walk there.
 - Sleep in the tent at night, sprint with stamina, watch the rain and the day/night cycle.
