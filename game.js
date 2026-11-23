@@ -2995,8 +2995,10 @@ function renderAccount() {
   const signedIn = !!account.user;
   const btn = $('mydayBtn');
   if (signedIn) {
-    const t = account.lastSaved ? account.lastSaved.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '…';
-    btn.textContent = `☁ ${account.user.username} · saved ${t}`;
+    let note = 'signed in';
+    if (account.busy) note = 'syncing…';
+    else if (account.lastSaved) note = `saved ${account.lastSaved.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+    btn.textContent = `☁ ${account.user.username} · ${note}`;
   } else {
     btn.textContent = '☁ Save progress with My Day';
   }
