@@ -17,6 +17,7 @@ const TAU = Math.PI * 2;
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
 const lerp = (a, b, t) => a + (b - a) * t;
 const rnd = (a, b) => a + Math.random() * (b - a);
+const dist2 = (a, b) => Math.hypot(a.x - b.x, a.z - b.z);
 const smoothstep = (a, b, x) => {
   const t = clamp((x - a) / (b - a), 0, 1);
   return t * t * (3 - 2 * t);
@@ -70,36 +71,59 @@ const STEMS = 16;
 const LEAVES_PER = 10;
 const TREE_CHANCE = 0.3;
 const HOUSE = { x: -6, z: -2 };
-const PLATE = { x: -3.1, z: 0.8 };
-const SHED = { x: -12.5, z: -7.5 };
+const SHED = { x: -12.5, z: -7.5 };        // Capi Food
+const CHEST_SHOP = { x: -8.2, z: -11.2 };  // next to Capi Food
+const JUNE_SHOP = { x: 9.5, z: -6.5 };     // June Food
 const TENT = { x: -11, z: 4.5 };
+const CAPI_PLATE = { x: -3.1, z: 0.8 };
+const JUNE_PLATE = { x: 5.4, z: 1.6 };
 const SPAWN = { x: 0, z: 4 };
 const WALK_SPEED = 3.4;
 const SPRINT_SPEED = 6.4;
 const DAY_SECONDS = 300;        // a full 24-hour cycle lasts 5 minutes
-const HUNGER_RATE = 0.22;       // hunger points lost per second
+const HUNGER_RATE = 0.22;
 const STAMINA_DRAIN = 24;
 const STAMINA_REGEN = 16;
 const LEMON_FILL = 20;
 const MAX_STACK = 10;
 const SLOTS = 5;
-const FOLLOW_MIN = 20;          // friendship needed to follow you when called
-const RANGE = { food: 2.6, shed: 2.6, bed: 2.0, plate: 1.9, dog: 2.1, cat: 2.1, crow: 3.2, lemon: 0.9, walk: 0.3 };
+const FOLLOW_MIN = 20;
+const VET_EVERY_DAYS = 3;
+const SICK_CHANCE_PER_HOUR = 0.015;
+const MAX_TORCHES = 40;
+const TORCH_LIGHTS = 6;
+const EAT_TIME = 1.4;
+const NAMES = { dog: 'Capi', cat: 'June' };
+const RANGE = {
+  food: 2.6, shed: 2.6, juneshop: 2.6, chest: 2.3, bed: 2.0, plate: 1.9, dog: 2.1, cat: 2.1,
+  crow: 3.2, lemon: 0.9, torch: 1.6, vet: 4.6, walk: 0.3, placeTorch: 0.8, waypoint: 1.5,
+};
 const LABELS = {
-  food: 'Take dog food',
+  food: 'Take Capi food',
   shed: 'Capi Food',
+  juneshop: 'June Food',
+  chest: 'Open chest (torches)',
   bed: 'Sleep',
   plate: 'Serve food',
-  dog: 'Pet the dog',
-  cat: 'Pet the cat',
+  dog: 'Pet Capi',
+  cat: 'Pet June',
   crow: 'Scare the crow',
   lemon: 'Pick up lemon',
+  torch: 'Pick up torch',
+  vet: 'Vet clinic',
 };
 const FOOD_REF = { x: HOUSE.x, z: HOUSE.z };
-const PLATE_REF = { x: PLATE.x, z: PLATE.z };
 const SHED_REF = { x: SHED.x, z: SHED.z };
+const JUNE_SHOP_REF = { x: JUNE_SHOP.x, z: JUNE_SHOP.z };
+const CHEST_REF = { x: CHEST_SHOP.x, z: CHEST_SHOP.z };
 const BED_REF = { x: TENT.x, z: TENT.z };
 const FLOWER_COLORS = [0xffffff, 0xff8fb1, 0xffe14d, 0xc79bff, 0xff9d5c];
+const ITEMS = {
+  food: { icon: '🥣', name: 'Capi food' },
+  catfood: { icon: '🐟', name: 'June food' },
+  lemon: { icon: '🍋', name: 'Lemon' },
+  torch: { icon: '🔥', name: 'Torch' },
+};
 
 /* ====================================================================
    State
@@ -110,8 +134,9 @@ const state = {
   fed: 0,
   muted: false,
   day: 1,
-  tod: 8.0,              // time of day in hours
-  rain: 0,               // 0..1 current rain intensity
+  tod: 8.0,
+  lastHour: 8,
+  rain: 0,
   rainTarget: 0,
   rainTimer: 120,
   hunger: 100,
@@ -121,9 +146,11 @@ const state = {
   sprintCD: 0,
   sleeping: false,
   call: false,
-  plateFood: false,
   inv: Array.from({ length: SLOTS }, () => null),
   sel: 0,
+  waypoint: null,
+  eatT: 0,
+  dayF: 1,
 };
 const picked = new Set();
 const dirs = new Set();
@@ -169,40 +196,30 @@ function ensureAudio() {
   noiseBuf = actx.createBuffer(1, actx.sampleRate * 2, actx.sampleRate);
   const d = noiseBuf.getChannelData(0);
   for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
-  startWind();
-  startRain();
+  startLoop(420, 'lowpass', 0.04, true);
+  rainGain = startLoop(1400, 'highpass', 0, false);
 }
 
-function startWind() {
+function startLoop(freq, type, vol, lfoOn) {
   const s = actx.createBufferSource();
   s.buffer = noiseBuf;
   s.loop = true;
-  const lp = actx.createBiquadFilter();
-  lp.type = 'lowpass';
-  lp.frequency.value = 420;
+  const f = actx.createBiquadFilter();
+  f.type = type;
+  f.frequency.value = freq;
   const g = actx.createGain();
-  g.gain.value = 0.04;
-  const lfo = actx.createOscillator();
-  lfo.frequency.value = 0.09;
-  const lg = actx.createGain();
-  lg.gain.value = 0.025;
-  lfo.connect(lg).connect(g.gain);
-  s.connect(lp).connect(g).connect(master);
+  g.gain.value = vol;
+  if (lfoOn) {
+    const lfo = actx.createOscillator();
+    lfo.frequency.value = 0.09;
+    const lg = actx.createGain();
+    lg.gain.value = 0.025;
+    lfo.connect(lg).connect(g.gain);
+    lfo.start();
+  }
+  s.connect(f).connect(g).connect(master);
   s.start();
-  lfo.start();
-}
-
-function startRain() {
-  const s = actx.createBufferSource();
-  s.buffer = noiseBuf;
-  s.loop = true;
-  const hp = actx.createBiquadFilter();
-  hp.type = 'highpass';
-  hp.frequency.value = 1400;
-  rainGain = actx.createGain();
-  rainGain.gain.value = 0;
-  s.connect(hp).connect(rainGain).connect(master);
-  s.start();
+  return g;
 }
 
 function sfxOut(sp) {
@@ -331,6 +348,14 @@ const SFX = {
   },
   click() { tone({ type: 'square', f0: 1500, f1: 900, dur: 0.05, vol: 0.06 }); },
   thunder() { noise({ dur: 2.2, vol: 0.35, f: 120, q: 0.7, type: 'lowpass' }); },
+  fire(sp) {
+    noise({ dur: 0.35, vol: 0.18, f: 900, q: 0.5, sp });
+    tone({ type: 'triangle', f0: 180, f1: 320, dur: 0.25, vol: 0.1, sp });
+  },
+  chest(sp) {
+    tone({ type: 'square', f0: 220, f1: 160, dur: 0.12, vol: 0.12, sp, filt: { type: 'lowpass', f: 900 } });
+    noise({ dur: 0.15, vol: 0.12, at: 0.05, f: 700, sp });
+  },
 };
 
 /* ====================================================================
@@ -400,18 +425,18 @@ function radialCanvasTexture(inner, outer) {
   g.fillRect(0, 0, 128, 128);
   return texFromCanvas(c);
 }
-function signTexture(text) {
+function signTexture(text, bg = '#f4e4b4', fg = '#3b2412', border = '#5a3a1e') {
   const c = document.createElement('canvas');
   c.width = 512;
   c.height = 128;
   const g = c.getContext('2d');
-  g.fillStyle = '#f4e4b4';
+  g.fillStyle = bg;
   g.fillRect(0, 0, 512, 128);
-  g.strokeStyle = '#5a3a1e';
+  g.strokeStyle = border;
   g.lineWidth = 10;
   g.strokeRect(6, 6, 500, 116);
-  g.fillStyle = '#3b2412';
-  g.font = '800 74px system-ui, -apple-system, sans-serif';
+  g.fillStyle = fg;
+  g.font = '800 70px system-ui, -apple-system, sans-serif';
   g.textAlign = 'center';
   g.textBaseline = 'middle';
   g.fillText(text, 256, 68);
@@ -421,6 +446,11 @@ function signTexture(text) {
 const mats = {};
 const geo = {};
 let blobTex = null;
+let glowTex = null;
+
+function std(color, extra = {}) {
+  return new THREE.MeshStandardMaterial({ color, roughness: 0.85, ...extra });
+}
 
 function buildMaterials(imgs) {
   const dogCoatTex = texFromCanvas(canvasFromImage(imgs.dogCoat, 256), true);
@@ -434,40 +464,64 @@ function buildMaterials(imgs) {
   mats.fallLeaf = new THREE.MeshLambertMaterial({ side: THREE.DoubleSide });
   mats.petal = new THREE.MeshLambertMaterial({ color: 0xffb8d6, side: THREE.DoubleSide });
   mats.bush = new THREE.MeshLambertMaterial();
-  mats.ground = new THREE.MeshStandardMaterial({ color: 0x5aa23a, roughness: 1 });
+  mats.ground = std(0x5aa23a, { roughness: 1 });
   mats.trunk = new THREE.MeshLambertMaterial({ color: 0x7a5230 });
   mats.foliage = new THREE.MeshLambertMaterial({ color: 0xffffff });
-  mats.lemon = new THREE.MeshStandardMaterial({ color: 0xffd53a, roughness: 0.35 });
-  mats.lemonLeaf = new THREE.MeshStandardMaterial({ color: 0x3f9d2c, roughness: 0.6, side: THREE.DoubleSide });
-  mats.wood = new THREE.MeshStandardMaterial({ color: 0xc08347, roughness: 0.9 });
-  mats.wood2 = new THREE.MeshStandardMaterial({ color: 0x9c6a3c, roughness: 0.9 });
-  mats.roof = new THREE.MeshStandardMaterial({ color: 0xb8432f, roughness: 0.8 });
-  mats.tent = new THREE.MeshStandardMaterial({ color: 0x6f7d3a, roughness: 0.9, side: THREE.DoubleSide });
-  mats.mattress = new THREE.MeshStandardMaterial({ color: 0x8fb8e8, roughness: 0.9 });
-  mats.blanket = new THREE.MeshStandardMaterial({ color: 0xc83b3b, roughness: 0.9 });
-  mats.pillow = new THREE.MeshStandardMaterial({ color: 0xf7f7f2, roughness: 0.9 });
-  mats.bowl = new THREE.MeshStandardMaterial({ color: 0xd9352b, roughness: 0.4 });
-  mats.kibble = new THREE.MeshStandardMaterial({ color: 0xa8632a, roughness: 0.7 });
-  mats.plate = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.3 });
-  mats.plateRim = new THREE.MeshStandardMaterial({ color: 0x3a7bd5, roughness: 0.3 });
-  mats.crow = new THREE.MeshStandardMaterial({ color: 0x1c1e25, roughness: 0.6 });
-  mats.beak = new THREE.MeshStandardMaterial({ color: 0x4a4a4a, roughness: 0.5 });
-  mats.tongue = new THREE.MeshStandardMaterial({ color: 0xff7f9f, roughness: 0.6 });
-  mats.dogCoat = new THREE.MeshStandardMaterial({ map: dogCoatTex, color: 0xdfe3ea, roughness: 0.95 });
-  mats.dogDark = new THREE.MeshStandardMaterial({ color: 0x2b2e35, roughness: 1 });
-  mats.dogTan = new THREE.MeshStandardMaterial({ color: 0xb88a57, roughness: 1 });
-  mats.dogCream = new THREE.MeshStandardMaterial({ color: 0xefe9dc, roughness: 1 });
-  mats.dogFace = new THREE.MeshStandardMaterial({ map: dogFaceTex, transparent: true, alphaTest: 0.03, roughness: 0.9, side: THREE.DoubleSide });
-  mats.catCoat = new THREE.MeshStandardMaterial({ map: catCoatTex, roughness: 0.9 });
-  mats.catLight = new THREE.MeshStandardMaterial({ color: 0xf0b77a, roughness: 0.9 });
-  mats.catFace = new THREE.MeshStandardMaterial({ map: catFaceTex, transparent: true, alphaTest: 0.03, roughness: 0.9, side: THREE.DoubleSide });
-  mats.sign = new THREE.MeshStandardMaterial({ map: signTexture('Capi Food'), roughness: 0.8 });
+  mats.lemon = std(0xffd53a, { roughness: 0.35 });
+  mats.lemonLeaf = std(0x3f9d2c, { roughness: 0.6, side: THREE.DoubleSide });
+  mats.wood = std(0xc08347, { roughness: 0.9 });
+  mats.wood2 = std(0x9c6a3c, { roughness: 0.9 });
+  mats.darkWood = std(0x5b3a1f, { roughness: 0.9 });
+  mats.brass = std(0xd4a640, { roughness: 0.35, metalness: 0.6 });
+  mats.roof = std(0xb8432f, { roughness: 0.8 });
+  mats.juneWall = std(0xb79ad1, { roughness: 0.9 });
+  mats.juneRoof = std(0x2e8b8b, { roughness: 0.8 });
+  mats.awning = std(0xf08a24, { roughness: 0.8, side: THREE.DoubleSide });
+  mats.door = std(0x2a1c10);
+  mats.tent = std(0x6f7d3a, { roughness: 0.9, side: THREE.DoubleSide });
+  mats.mattress = std(0x8fb8e8, { roughness: 0.9 });
+  mats.blanket = std(0xc83b3b, { roughness: 0.9 });
+  mats.pillow = std(0xf7f7f2, { roughness: 0.9 });
+  mats.bowl = std(0xd9352b, { roughness: 0.4 });
+  mats.kibble = std(0xa8632a, { roughness: 0.7 });
+  mats.fish = std(0xf08f5a, { roughness: 0.6 });
+  mats.can = std(0xc9d1d9, { roughness: 0.3, metalness: 0.7 });
+  mats.plate = std(0xffffff, { roughness: 0.3 });
+  mats.rimBlue = std(0x3a7bd5, { roughness: 0.3 });
+  mats.rimPink = std(0xe85b9a, { roughness: 0.3 });
+  mats.crow = std(0x1c1e25, { roughness: 0.6 });
+  mats.beak = std(0x4a4a4a, { roughness: 0.5 });
+  mats.tongue = std(0xff7f9f, { roughness: 0.6 });
+  mats.white = std(0xf4f4f0, { roughness: 0.9 });
+  mats.vetRoof = std(0x2d6cdf, { roughness: 0.7 });
+  mats.sand = std(0xe8d49a, { roughness: 1 });
+  mats.fence = std(0xf5f0e6, { roughness: 0.8 });
+  mats.red = std(0xe53935, { roughness: 0.5 });
+  mats.yellow = std(0xffc928, { roughness: 0.5 });
+  mats.blue = std(0x1e88e5, { roughness: 0.5 });
+  mats.flame = new THREE.MeshBasicMaterial({ color: 0xffa634 });
+  mats.flameCore = new THREE.MeshBasicMaterial({ color: 0xfff1a8 });
+  mats.dogCoat = std(0xdfe3ea, { map: dogCoatTex, roughness: 0.95 });
+  mats.dogDark = std(0x2b2e35, { roughness: 1 });
+  mats.dogTan = std(0xb88a57, { roughness: 1 });
+  mats.dogCream = std(0xefe9dc, { roughness: 1 });
+  mats.dogFace = std(0xffffff, { map: dogFaceTex, transparent: true, alphaTest: 0.03, roughness: 0.9, side: THREE.DoubleSide });
+  mats.catCoat = std(0xffffff, { map: catCoatTex, roughness: 0.9 });
+  mats.catLight = std(0xf0b77a, { roughness: 0.9 });
+  mats.catFace = std(0xffffff, { map: catFaceTex, transparent: true, alphaTest: 0.03, roughness: 0.9, side: THREE.DoubleSide });
+  mats.signCapi = std(0xffffff, { map: signTexture('Capi Food'), roughness: 0.8 });
+  mats.signJune = std(0xffffff, { map: signTexture('June Food', '#f3e8ff', '#4b2a6b', '#6d3f99'), roughness: 0.8 });
+  mats.signChest = std(0xffffff, { map: signTexture('Chest Shop', '#fff2d6', '#5a2d0c', '#a0521d'), roughness: 0.8 });
+  mats.signVet = std(0xffffff, { map: signTexture('✚ VET', '#ffffff', '#d32f2f', '#d32f2f'), roughness: 0.8 });
+  mats.signPark = std(0xffffff, { map: signTexture('PET PARK', '#e8ffe0', '#1f6b1f', '#2e8b2e'), roughness: 0.8 });
   mats.ridge = new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.DoubleSide, fog: false });
   mats.spruce = new THREE.MeshBasicMaterial({ color: 0xffffff, fog: false });
   mats.monkWall = new THREE.MeshBasicMaterial({ color: 0xf1e7c8, fog: false });
   mats.monkDome = new THREE.MeshBasicMaterial({ color: 0x2c4fa6, fog: false });
   mats.monkRoof = new THREE.MeshBasicMaterial({ color: 0x8b3b2b, fog: false });
+  mats.beacon = new THREE.MeshBasicMaterial({ color: 0xff5a36, transparent: true, opacity: 0.45, depthWrite: false, fog: false });
   blobTex = radialCanvasTexture('rgba(20,40,10,0.5)', 'rgba(20,40,10,0)');
+  glowTex = radialCanvasTexture('rgba(255,190,90,0.9)', 'rgba(255,120,30,0)');
 }
 
 function lemonProfile() {
@@ -532,6 +586,11 @@ function shadowAll(obj) {
   });
   return obj;
 }
+function pickable(mesh, kind, ref, label) {
+  mesh.userData.pick = { kind, ref, label };
+  pickables.add(mesh);
+  return mesh;
+}
 
 function buildGeometry() {
   geo.tuft = tuftGeometry();
@@ -551,6 +610,11 @@ function buildGeometry() {
   geo.rim = new THREE.TorusGeometry(0.41, 0.02, 6, 26);
   geo.bowlCup = new THREE.CylinderGeometry(0.3, 0.22, 0.1, 16);
   geo.spruce = new THREE.ConeGeometry(1, 3, 6);
+  geo.stick = new THREE.CylinderGeometry(0.035, 0.05, 1.1, 6);
+  geo.torchCup = new THREE.CylinderGeometry(0.09, 0.06, 0.12, 8);
+  geo.flame = new THREE.ConeGeometry(0.09, 0.28, 8);
+  geo.flameCore = new THREE.ConeGeometry(0.045, 0.16, 6);
+  geo.post = new THREE.CylinderGeometry(0.06, 0.06, 1.0, 6);
 }
 
 /* ====================================================================
@@ -656,7 +720,6 @@ function buildSky() {
   }
 }
 
-// Bucovina-style backdrop: painted ridges, spruce forest, monastery on a hill.
 function buildBackdrop() {
   backdrop = new THREE.Group();
   scene.add(backdrop);
@@ -689,7 +752,6 @@ function buildBackdrop() {
     mesh.position.y = -10;
     backdrop.add(mesh);
   }
-
   const N = 1600;
   const spruces = new THREE.InstancedMesh(geo.spruce, mats.spruce, N);
   const col = new THREE.Color();
@@ -706,7 +768,6 @@ function buildBackdrop() {
   }
   spruces.instanceMatrix.needsUpdate = true;
   backdrop.add(spruces);
-
   const mon = new THREE.Group();
   const a = 1.1;
   mon.position.set(Math.sin(a) * 255, 4, Math.cos(a) * 255);
@@ -737,7 +798,6 @@ function updateSky(dt, cam, dayF, dusk, rain) {
   skyMat.uniforms.mid.value.copy(tmpB);
   skyMat.uniforms.bot.value.copy(tmpC);
   scene.fog.color.copy(tmpC);
-
   sky.position.copy(cam);
   stars.position.copy(cam);
   starMat.opacity = (1 - dayF) * 0.9 * (1 - rain * 0.8);
@@ -745,7 +805,6 @@ function updateSky(dt, cam, dayF, dusk, rain) {
   sunSprite.material.opacity = smoothstep(-0.05, 0.1, sunDir.y) * (1 - rain * 0.6);
   moonSprite.position.copy(cam).addScaledVector(sunDir, -800);
   moonSprite.material.opacity = (1 - dayF) * (1 - rain * 0.6);
-
   backdrop.position.set(cam.x, 0, cam.z);
   for (const c of clouds) {
     c.userData.angle += dt * 0.012 * c.userData.dir;
@@ -768,10 +827,11 @@ function isNight() {
 function updateEnvironment(dt) {
   sunDirFor(state.tod);
   const dayF = smoothstep(-0.1, 0.2, sunDir.y);
+  state.dayF = dayF;
   const dusk = Math.exp(-(sunDir.y * sunDir.y) / 0.01) * 0.85;
   const rain = state.rain;
-
-  lightDir.copy(sunDir.y >= 0 ? sunDir : sunDir.clone().negate());
+  lightDir.copy(sunDir);
+  if (sunDir.y < 0) lightDir.negate();
   sunLight.position.set(player.x + lightDir.x * 60, lightDir.y * 60, player.z + lightDir.z * 60);
   sunLight.target.position.set(player.x, 0, player.z);
   sunLight.target.updateMatrixWorld();
@@ -780,7 +840,6 @@ function updateEnvironment(dt) {
   sunLight.intensity = intensity * (1 - rain * 0.5);
   hemi.intensity = lerp(0.3, 1.2, dayF) * (1 - rain * 0.35);
   hemi.color.copy(hemiNight).lerp(hemiDay, dayF);
-
   updateSky(dt, camera.position, dayF, dusk, rain);
 }
 
@@ -809,12 +868,51 @@ function toggleRain() {
 }
 
 /* ====================================================================
+   Points of interest: shops, vets and pet parks (vets/parks are random)
+   ==================================================================== */
+const pois = [];      // everything that appears on the map
+const vets = [];
+const parks = [];
+
+function addPoi(p) {
+  pois.push(p);
+  return p;
+}
+
+function generateRandomPois() {
+  const taken = pois.map((p) => ({ x: p.x, z: p.z }));
+  const spot = (min, max) => {
+    for (let tries = 0; tries < 40; tries++) {
+      const a = rnd(0, TAU);
+      const d = rnd(min, max);
+      const p = { x: Math.cos(a) * d, z: Math.sin(a) * d };
+      if (taken.every((q) => Math.hypot(q.x - p.x, q.z - p.z) > 30)) {
+        taken.push(p);
+        return p;
+      }
+    }
+    const a = rnd(0, TAU);
+    return { x: Math.cos(a) * max, z: Math.sin(a) * max };
+  };
+  [[38, 65], [80, 140], [160, 260], [300, 460]].forEach(([a, b], i) => {
+    const p = spot(a, b);
+    vets.push(addPoi({ type: 'vet', x: p.x, z: p.z, icon: '🏥', label: `VET ${i + 1}`, clear: 12 }));
+  });
+  [[30, 55], [90, 170], [200, 360]].forEach(([a, b], i) => {
+    const p = spot(a, b);
+    parks.push(addPoi({ type: 'park', x: p.x, z: p.z, r: 8, icon: '🎾', label: `PARK ${i + 1}`, clear: 14, active: -10 }));
+  });
+}
+
+/* ====================================================================
    Infinite world: chunks of grass, trees, bushes and lemons
    ==================================================================== */
 const chunks = new Map();
 let obstacles = [
   { x: HOUSE.x, z: HOUSE.z, r: 1.25, ck: 'static' },
   { x: SHED.x, z: SHED.z, r: 1.9, ck: 'static' },
+  { x: CHEST_SHOP.x, z: CHEST_SHOP.z, r: 1.3, ck: 'static' },
+  { x: JUNE_SHOP.x, z: JUNE_SHOP.z, r: 1.9, ck: 'static' },
   { x: TENT.x, z: TENT.z, r: 1.2, ck: 'static' },
 ];
 const flyers = [];
@@ -828,7 +926,7 @@ let chunkPZ = null;
 
 function nearStatic(x, z) {
   if (Math.hypot(x, z) < 11) return true;
-  for (const s of [HOUSE, SHED, TENT]) if (Math.hypot(x - s.x, z - s.z) < 7) return true;
+  for (const p of pois) if (Math.hypot(x - p.x, z - p.z) < (p.clear || 7)) return true;
   return false;
 }
 
@@ -852,11 +950,13 @@ function buildChunk(cx, cz, key) {
     dummy.position.set(x, 0, z);
     dummy.rotation.set(0, r() * TAU, 0);
     dummy.scale.set(0.8 + r() * 0.6, sy, 0.8 + r() * 0.6);
+    // no grass on the sand of the pet parks
+    if (parks.some((pk) => Math.hypot(x - pk.x, z - pk.z) < pk.r + 0.3)) dummy.scale.set(0, 0, 0);
     dummy.updateMatrix();
     grass.setMatrixAt(i, dummy.matrix);
     if (stem) {
       col.setHSL(0.27 + r() * 0.03, 0.5, 0.36);
-      if (r() < 0.45) heads.push({ x, y: sy, z });
+      if (r() < 0.45 && dummy.scale.y > 0) heads.push({ x, y: sy, z });
     } else if (r() < 0.2) {
       col.setHSL(0.19 + r() * 0.04, 0.7, 0.45);
     } else {
@@ -974,15 +1074,14 @@ function buildChunk(cx, cz, key) {
       const key2 = `${cx}:${cz}:${j}`;
       const x = ox + 1.5 + r() * (CHUNK - 3);
       const z = oz + 1.5 + r() * (CHUNK - 3);
-      if (picked.has(key2)) continue;
+      if (picked.has(key2) || nearStatic(x, z)) continue;
       const m = new THREE.Mesh(geo.lemon, mats.lemon);
       m.scale.setScalar(0.55);
       m.rotation.set(0, r() * TAU, Math.PI / 2, 'YXZ');
       m.position.set(x, 0.22, z);
       group.add(m);
       const rec = { x, z, mesh: m, key: key2, done: false };
-      m.userData.pick = { kind: 'lemon', ref: rec };
-      pickables.add(m);
+      pickable(m, 'lemon', rec);
       c.pickups.push(rec);
     }
   }
@@ -1033,9 +1132,9 @@ function updatePickups(dt) {
 }
 
 /* ====================================================================
-   Static structures: dog house, plate, shed, tent with bed
+   Static structures
    ==================================================================== */
-const plate = { kib: [] };
+const plates = [];
 
 function buildHouse() {
   const g = new THREE.Group();
@@ -1057,9 +1156,7 @@ function buildHouse() {
   g.add(roof);
   const bowl = new THREE.Mesh(geo.bowlCup, mats.bowl);
   bowl.position.set(0, 0.16, 0.2);
-  bowl.userData.pick = { kind: 'food', ref: FOOD_REF };
-  g.add(bowl);
-  pickables.add(bowl);
+  g.add(pickable(bowl, 'food', FOOD_REF));
   const rr = mulberry32(99);
   for (let i = 0; i < 16; i++) {
     const k = new THREE.Mesh(geo.smallSphere, mats.kibble);
@@ -1067,69 +1164,116 @@ function buildHouse() {
     const d = rr() * 0.2;
     k.scale.setScalar(0.045);
     k.position.set(Math.cos(a) * d, 0.24 + rr() * 0.02, 0.2 + Math.sin(a) * d);
-    k.userData.pick = { kind: 'food', ref: FOOD_REF };
-    g.add(k);
-    pickables.add(k);
+    g.add(pickable(k, 'food', FOOD_REF));
   }
   shadowAll(g);
+  addPoi({ type: 'home', x: HOUSE.x, z: HOUSE.z, icon: '🏠', label: "Capi's house", clear: 7 });
 }
 
-function buildPlate() {
+function buildPlate(pos, who, rimMat, kibMat) {
+  const p = { x: pos.x, z: pos.z, who, food: false, kib: [] };
+  const label = `Serve ${NAMES[who]}'s food`;
   const g = new THREE.Group();
-  g.position.set(PLATE.x, 0.03, PLATE.z);
+  g.position.set(pos.x, 0.03, pos.z);
   scene.add(g);
   const disc = new THREE.Mesh(geo.plate, mats.plate);
-  disc.userData.pick = { kind: 'plate', ref: PLATE_REF };
-  g.add(disc);
-  pickables.add(disc);
-  const rim = new THREE.Mesh(geo.rim, mats.plateRim);
+  g.add(pickable(disc, 'plate', p, label));
+  const rim = new THREE.Mesh(geo.rim, rimMat);
   rim.rotation.x = Math.PI / 2;
   rim.position.y = 0.03;
   g.add(rim);
-  const rr = mulberry32(42);
+  const rr = mulberry32(42 + plates.length);
   for (let i = 0; i < 12; i++) {
-    const k = new THREE.Mesh(geo.smallSphere, mats.kibble);
+    const k = new THREE.Mesh(geo.smallSphere, kibMat);
     const a = rr() * TAU;
     const d = rr() * 0.28;
     k.scale.setScalar(0.05);
     k.position.set(Math.cos(a) * d, 0.04, Math.sin(a) * d);
     k.visible = false;
-    k.userData.pick = { kind: 'plate', ref: PLATE_REF };
-    g.add(k);
-    plate.kib.push(k);
-    pickables.add(k);
+    g.add(pickable(k, 'plate', p, label));
+    p.kib.push(k);
   }
+  plates.push(p);
+  addPoi({ type: 'plate', x: pos.x, z: pos.z, icon: '🍽️', label: `${NAMES[who]}'s plate`, clear: 4 });
+  return p;
 }
-function setPlateFood(on) {
-  for (const k of plate.kib) k.visible = on;
+function setPlateFood(p, on) {
+  p.food = on;
+  for (const k of p.kib) k.visible = on;
 }
 
-function buildShed() {
+function buildShop({ pos, rot, wall, roof, sign, kind, ref, icon, label }) {
   const g = new THREE.Group();
-  g.position.set(SHED.x, 0, SHED.z);
-  g.rotation.y = 0.35;
+  g.position.set(pos.x, 0, pos.z);
+  g.rotation.y = rot;
   scene.add(g);
-  const wall = new THREE.Mesh(new THREE.BoxGeometry(2.8, 1.7, 2.2), mats.wood2);
-  wall.position.y = 0.85;
-  wall.userData.pick = { kind: 'shed', ref: SHED_REF };
-  g.add(wall);
-  pickables.add(wall);
+  const body = new THREE.Mesh(new THREE.BoxGeometry(2.8, 1.7, 2.2), wall);
+  body.position.y = 0.85;
+  g.add(pickable(body, kind, ref));
   for (const s of [-1, 1]) {
-    const slab = new THREE.Mesh(new THREE.BoxGeometry(1.9, 0.12, 2.5), mats.roof);
+    const slab = new THREE.Mesh(new THREE.BoxGeometry(1.9, 0.12, 2.5), roof);
     slab.position.set(s * 0.75, 2.0, 0);
     slab.rotation.z = -s * 0.5;
     g.add(slab);
   }
-  const door = new THREE.Mesh(new THREE.BoxGeometry(0.8, 1.1, 0.05), new THREE.MeshStandardMaterial({ color: 0x2a1c10 }));
+  const door = new THREE.Mesh(new THREE.BoxGeometry(0.8, 1.1, 0.05), mats.door);
   door.position.set(0, 0.6, 1.13);
   g.add(door);
-  const sign = new THREE.Mesh(new THREE.PlaneGeometry(2.0, 0.5), mats.sign);
-  sign.position.set(0, 1.42, 1.14);
-  sign.userData.pick = { kind: 'shed', ref: SHED_REF };
-  g.add(sign);
-  pickables.add(sign);
+  const sg = new THREE.Mesh(new THREE.PlaneGeometry(2.0, 0.5), sign);
+  sg.position.set(0, 1.42, 1.14);
+  g.add(pickable(sg, kind, ref));
   shadowAll(g);
+  addPoi({ type: 'shop', x: pos.x, z: pos.z, icon, label, clear: 7 });
 }
+
+function buildChestShop() {
+  const g = new THREE.Group();
+  g.position.set(CHEST_SHOP.x, 0, CHEST_SHOP.z);
+  g.rotation.y = 0.2;
+  scene.add(g);
+  const counter = new THREE.Mesh(new THREE.BoxGeometry(2.3, 0.9, 0.9), mats.wood);
+  counter.position.set(0, 0.45, 0);
+  g.add(counter);
+  for (const x of [-1.1, 1.1]) {
+    const post = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 2.2, 6), mats.darkWood);
+    post.position.set(x, 1.1, -0.35);
+    g.add(post);
+  }
+  const awning = new THREE.Mesh(new THREE.BoxGeometry(2.7, 0.08, 1.5), mats.awning);
+  awning.position.set(0, 2.2, 0.15);
+  awning.rotation.x = 0.25;
+  g.add(awning);
+  const sign = new THREE.Mesh(new THREE.PlaneGeometry(1.9, 0.47), mats.signChest);
+  sign.position.set(0, 1.85, -0.32);
+  g.add(sign);
+  // the chest with torches
+  const chest = new THREE.Group();
+  chest.position.set(0.2, 0.9, 0.05);
+  const base = new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.42, 0.5), mats.darkWood);
+  base.position.y = 0.21;
+  const lid = new THREE.Mesh(new THREE.BoxGeometry(0.82, 0.16, 0.52), mats.wood2);
+  lid.position.y = 0.5;
+  const band = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.6, 0.53), mats.brass);
+  band.position.y = 0.3;
+  const lock = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.12, 0.04), mats.brass);
+  lock.position.set(0, 0.38, 0.27);
+  chest.add(base, lid, band, lock);
+  for (const m of [base, lid, band, lock]) pickable(m, 'chest', CHEST_REF);
+  g.add(chest);
+  chestLid = lid;
+  // torches on display
+  for (const x of [-0.8, -0.55]) {
+    const t = buildTorchMesh(false);
+    t.position.set(x, 0.9, 0.1);
+    t.rotation.z = 0.15;
+    t.scale.setScalar(0.8);
+    g.add(t);
+  }
+  shadowAll(g);
+  addPoi({ type: 'shop', x: CHEST_SHOP.x, z: CHEST_SHOP.z, icon: '🧰', label: 'Chest Shop', clear: 6 });
+}
+let chestLid = null;
+let chestOpenT = 0;
 
 function buildTent() {
   const g = new THREE.Group();
@@ -1144,17 +1288,12 @@ function buildTent() {
   canopy.rotation.y = Math.PI / 4;
   canopy.position.y = 2.25;
   g.add(canopy);
-
   const frame = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.25, 0.8), mats.wood);
   frame.position.set(0, 0.15, 0);
-  frame.userData.pick = { kind: 'bed', ref: BED_REF };
-  g.add(frame);
+  g.add(pickable(frame, 'bed', BED_REF));
   const mattress = new THREE.Mesh(new THREE.BoxGeometry(1.4, 0.12, 0.72), mats.mattress);
   mattress.position.set(0, 0.33, 0);
-  mattress.userData.pick = { kind: 'bed', ref: BED_REF };
-  g.add(mattress);
-  pickables.add(frame);
-  pickables.add(mattress);
+  g.add(pickable(mattress, 'bed', BED_REF));
   const pillow = new THREE.Mesh(new THREE.BoxGeometry(0.35, 0.1, 0.5), mats.pillow);
   pillow.position.set(-0.5, 0.45, 0);
   g.add(pillow);
@@ -1162,12 +1301,230 @@ function buildTent() {
   blanket.position.set(0.2, 0.41, 0);
   g.add(blanket);
   shadowAll(g);
+  addPoi({ type: 'tent', x: TENT.x, z: TENT.z, icon: '⛺', label: 'Tent', clear: 6 });
+}
+
+function buildVet(v) {
+  const g = new THREE.Group();
+  g.position.set(v.x, 0, v.z);
+  g.rotation.y = Math.atan2(-v.x, -v.z);   // the door faces home
+  scene.add(g);
+  const body = new THREE.Mesh(new THREE.BoxGeometry(6, 3.2, 5), mats.white);
+  body.position.y = 1.6;
+  g.add(pickable(body, 'vet', v));
+  const roof = new THREE.Mesh(new THREE.ConeGeometry(4.6, 1.8, 4), mats.vetRoof);
+  roof.rotation.y = Math.PI / 4;
+  roof.position.y = 4.1;
+  g.add(roof);
+  const door = new THREE.Mesh(new THREE.BoxGeometry(1.3, 2.1, 0.06), mats.vetRoof);
+  door.position.set(0, 1.05, 2.53);
+  g.add(door);
+  const sign = new THREE.Mesh(new THREE.PlaneGeometry(3.2, 0.8), mats.signVet);
+  sign.position.set(0, 2.65, 2.54);
+  g.add(pickable(sign, 'vet', v));
+  const cross = new THREE.Group();
+  const c1 = new THREE.Mesh(new THREE.BoxGeometry(1.0, 0.3, 0.3), mats.red);
+  const c2 = new THREE.Mesh(new THREE.BoxGeometry(0.3, 1.0, 0.3), mats.red);
+  cross.add(c1, c2);
+  cross.position.set(0, 5.6, 0);
+  g.add(cross);
+  v.cross = cross;
+  shadowAll(g);
+  obstacles.push({ x: v.x, z: v.z, r: 3.6, ck: 'static' });
+}
+
+function buildPark(pk) {
+  const g = new THREE.Group();
+  g.position.set(pk.x, 0, pk.z);
+  g.rotation.y = Math.atan2(-pk.x, -pk.z);
+  scene.add(g);
+  const sand = new THREE.Mesh(new THREE.CircleGeometry(pk.r, 40), mats.sand);
+  sand.rotation.x = -Math.PI / 2;
+  sand.position.y = 0.015;
+  sand.receiveShadow = true;
+  g.add(sand);
+  const N = 30;
+  for (let i = 0; i < N; i++) {
+    const a = (i / N) * TAU;
+    if (Math.abs(((a - Math.PI / 2 + TAU) % TAU) - Math.PI) > Math.PI - 0.35) continue; // gap = entrance
+    const post = new THREE.Mesh(geo.post, mats.fence);
+    post.position.set(Math.cos(a) * (pk.r + 0.4), 0.5, Math.sin(a) * (pk.r + 0.4));
+    g.add(post);
+  }
+  for (const y of [0.45, 0.85]) {
+    const rail = new THREE.Mesh(new THREE.TorusGeometry(pk.r + 0.4, 0.035, 4, 64, TAU - 0.7), mats.fence);
+    rail.rotation.x = Math.PI / 2;
+    rail.rotation.z = Math.PI / 2 + 0.35;
+    rail.position.y = y;
+    g.add(rail);
+  }
+  // slide
+  const ladder = new THREE.Mesh(new THREE.BoxGeometry(0.7, 1.6, 0.15), mats.blue);
+  ladder.position.set(-3, 0.8, -3);
+  g.add(ladder);
+  const top = new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.1, 0.8), mats.blue);
+  top.position.set(-3, 1.6, -2.6);
+  g.add(top);
+  const slide = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.06, 2.6), mats.red);
+  slide.position.set(-3, 0.85, -1.1);
+  slide.rotation.x = 0.62;
+  g.add(slide);
+  // seesaw
+  const pivot = new THREE.Mesh(new THREE.ConeGeometry(0.25, 0.45, 4), mats.yellow);
+  pivot.position.set(3, 0.22, 1);
+  g.add(pivot);
+  const plank = new THREE.Mesh(new THREE.BoxGeometry(3, 0.08, 0.35), mats.red);
+  plank.position.set(3, 0.47, 1);
+  g.add(plank);
+  pk.plank = plank;
+  // balls
+  pk.balls = [];
+  const ballMats = [mats.red, mats.blue, mats.yellow];
+  for (let i = 0; i < 3; i++) {
+    const b = new THREE.Mesh(geo.smallSphere, ballMats[i]);
+    b.scale.setScalar(0.25);
+    b.position.set(rnd(-4, 4), 0.25, rnd(-4, 4));
+    g.add(b);
+    pk.balls.push({ mesh: b, ph: rnd(0, TAU) });
+  }
+  // sign at the entrance
+  const sign = new THREE.Mesh(new THREE.PlaneGeometry(2.2, 0.55), mats.signPark);
+  sign.position.set(0, 1.6, pk.r + 0.6);
+  g.add(sign);
+  for (const x of [-1.15, 1.15]) {
+    const post = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 1.9, 6), mats.fence);
+    post.position.set(x, 0.95, pk.r + 0.58);
+    g.add(post);
+  }
+  shadowAll(g);
+}
+
+function updateParks(dt) {
+  for (const pk of parks) {
+    const active = T - pk.active < 1;
+    pk.plank.rotation.z = active ? Math.sin(T * 2.2) * 0.25 : pk.plank.rotation.z * 0.95;
+    for (const b of pk.balls) {
+      b.mesh.position.y = 0.25 + (active ? Math.abs(Math.sin(T * 3 + b.ph)) * 0.6 : 0);
+    }
+  }
 }
 
 /* ====================================================================
-   Quadruped animals (dog and cat built from primitives + photo textures)
+   Torches (from the chest; place them on the ground, they give light)
+   ==================================================================== */
+const torches = [];
+const torchLights = [];
+
+function buildTorchMesh(lit) {
+  const g = new THREE.Group();
+  const stick = new THREE.Mesh(geo.stick, mats.darkWood);
+  stick.position.y = 0.55;
+  g.add(stick);
+  const cup = new THREE.Mesh(geo.torchCup, mats.brass);
+  cup.position.y = 1.12;
+  g.add(cup);
+  const flame = new THREE.Mesh(geo.flame, mats.flame);
+  flame.position.y = 1.3;
+  const core = new THREE.Mesh(geo.flameCore, mats.flameCore);
+  core.position.y = 1.27;
+  g.add(flame, core);
+  const glow = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTex, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending }));
+  glow.position.y = 1.3;
+  glow.scale.setScalar(1.1);
+  g.add(glow);
+  g.userData.flame = flame;
+  g.userData.glow = glow;
+  g.userData.parts = [stick, cup, flame, core];
+  flame.visible = lit;
+  core.visible = lit;
+  glow.visible = lit;
+  return g;
+}
+
+function buildTorchLights() {
+  for (let i = 0; i < TORCH_LIGHTS; i++) {
+    const l = new THREE.PointLight(0xff9a3c, 0, 15, 1.6);
+    l.position.set(0, -50, 0);
+    scene.add(l);
+    torchLights.push(l);
+  }
+}
+
+function placeTorch(x, z) {
+  const slot = state.inv.findIndex((s) => s && s.type === 'torch');
+  if (slot < 0) {
+    toast('You have no torches. Get some from the Chest Shop.');
+    return;
+  }
+  if (torches.length >= MAX_TORCHES) {
+    toast(`You can place up to ${MAX_TORCHES} torches.`);
+    return;
+  }
+  removeOne(slot);
+  const g = buildTorchMesh(true);
+  g.position.set(x, 0, z);
+  scene.add(g);
+  shadowAll(g);
+  g.userData.glow.castShadow = false;
+  const rec = { x, z, group: g, ph: rnd(0, TAU) };
+  for (const m of g.userData.parts) pickable(m, 'torch', rec);
+  torches.push(rec);
+  SFX.fire(spatial(x, z));
+  toast('Torch placed 🔥');
+}
+
+function pickupTorch(rec) {
+  if (!addItem('torch', 1)) {
+    toast('Your inventory is full.');
+    return;
+  }
+  for (const m of rec.group.userData.parts) pickables.delete(m);
+  scene.remove(rec.group);
+  torches.splice(torches.indexOf(rec), 1);
+  SFX.pick(spatial(rec.x, rec.z));
+  toast('Torch picked up.');
+}
+
+const lightSources = [];
+function updateTorches(dt) {
+  for (const t of torches) {
+    const f = 1 + Math.sin(T * 13 + t.ph) * 0.08 + Math.sin(T * 7.3 + t.ph * 2) * 0.06;
+    t.group.userData.flame.scale.set(1, f, 1);
+    t.group.userData.glow.scale.setScalar(1.1 * f);
+    t.flicker = f;
+  }
+  // hand torch
+  const holding = selectedType() === 'torch';
+  const hf = 1 + Math.sin(T * 12) * 0.08;
+  if (holding) player.hand.torch.userData.flame.scale.set(1, hf, 1);
+
+  lightSources.length = 0;
+  for (const t of torches) lightSources.push({ x: t.x, y: 1.35, z: t.z, f: t.flicker || 1, d: Math.hypot(t.x - player.x, t.z - player.z) });
+  if (holding && !state.sleeping) {
+    const s = Math.sin(player.yaw);
+    const c = Math.cos(player.yaw);
+    lightSources.push({ x: player.x + s * 0.2 + c * 0.3, y: 1.0, z: player.z + c * 0.2 - s * 0.3, f: hf, d: 0 });
+  }
+  lightSources.sort((a, b) => a.d - b.d);
+  const base = lerp(14, 3, state.dayF);
+  for (let i = 0; i < TORCH_LIGHTS; i++) {
+    const l = torchLights[i];
+    const src = lightSources[i];
+    if (src && src.d < 45) {
+      l.position.set(src.x, src.y, src.z);
+      l.intensity = base * src.f;
+    } else {
+      l.intensity = 0;
+      l.position.set(0, -50, 0);
+    }
+  }
+}
+
+/* ====================================================================
+   Quadruped animals: Capi (dog) and June (cat)
    ==================================================================== */
 const animals = {};
+const animalList = [];
 
 function makeBlob(size) {
   const m = new THREE.Mesh(
@@ -1189,7 +1546,6 @@ function buildQuadruped(cfg) {
   const L = 0.42;
   const bodyY = L + 0.2;
   const mesh = (g, m) => new THREE.Mesh(g, m);
-
   const body = mesh(fluffGeo(geo.sphere.clone(), 0.09), cfg.coat);
   body.scale.set(0.34, 0.28, 0.52);
   body.position.y = bodyY;
@@ -1260,6 +1616,7 @@ function buildQuadruped(cfg) {
 
   const a = {
     kind: cfg.kind,
+    name: NAMES[cfg.kind],
     cfg,
     root,
     holder,
@@ -1286,11 +1643,16 @@ function buildQuadruped(cfg) {
     petCD: 0,
     gainCD: 0,
     friend: cfg.friend,
+    plate: null,
+    park: null,
+    sick: false,
+    lastVet: 1,
+    dueNotified: false,
+    sadT: rnd(4, 9),
   };
-  body.userData.pick = { kind: cfg.kind, ref: a };
-  skull.userData.pick = { kind: cfg.kind, ref: a };
-  pickables.add(body);
-  pickables.add(skull);
+  pickable(body, cfg.kind, a);
+  pickable(skull, cfg.kind, a);
+  animalList.push(a);
   return a;
 }
 
@@ -1313,7 +1675,7 @@ function buildAnimals() {
     tailPts: [[0, 0, 0], [0, 0.18, -0.1], [0, 0.4, -0.12], [0, 0.52, -0.04]],
     shadow: 1.1, height: 0.8,
   });
-  for (const a of [animals.dog, animals.cat]) pickWander(a);
+  for (const a of animalList) pickWander(a);
   animals.dog.x = -3.6;
   animals.dog.z = 0.4;
   animals.cat.x = 3.4;
@@ -1347,20 +1709,25 @@ function friendLabel(f) {
   return 'Best friend';
 }
 
+function needsVet(a) {
+  return a.sick || state.day - a.lastVet >= VET_EVERY_DAYS;
+}
+
 function updateAnimal(a, dt, t) {
   a.moving = false;
   a.happy = Math.max(0, a.happy - dt);
   a.petCD = Math.max(0, a.petCD - dt);
   a.gainCD = Math.max(0, a.gainCD - dt);
+  const slow = needsVet(a) ? 0.65 : 1;
   const following = state.call && a.friend >= FOLLOW_MIN && !state.sleeping;
 
   if (a.state === 'plate') {
-    if (!state.plateFood) {
+    const p = a.plate;
+    if (!p || !p.food) {
       a.state = 'idle';
       a.timer = 2;
-    } else if (stepTo(a, PLATE.x, PLATE.z, a.speed * 1.6, dt, 0.9)) {
-      state.plateFood = false;
-      setPlateFood(false);
+    } else if (stepTo(a, p.x, p.z, a.speed * 1.6 * slow, dt, a.kind === 'dog' ? 0.9 : 0.6)) {
+      setPlateFood(p, false);
       a.state = 'eat';
       a.timer = 3.2;
       a.eatTick = 0;
@@ -1377,66 +1744,97 @@ function updateAnimal(a, dt, t) {
       a.timer = rnd(2, 4);
       a.happy = 1.6;
       state.fed++;
-      if (a.kind === 'dog') a.friend = Math.min(100, a.friend + 10);
-      SFX.bark(spatial(a.x, a.z));
+      a.friend = Math.min(100, a.friend + 10);
+      if (a.kind === 'dog') SFX.bark(spatial(a.x, a.z));
+      else SFX.meow(spatial(a.x, a.z));
       bubble('Yum yum!', a.x, a.cfg.height + 0.25, a.z, { life: 1.3 });
-      toast('The dog ate! Friendship up 🐶');
-      if (state.plateFood) a.state = 'plate';
+      toast(`${a.name} ate! Friendship up ${a.kind === 'dog' ? '🐶' : '🐱'}`);
+      if (a.plate && a.plate.food) a.state = 'plate';
+    }
+  } else if (a.state === 'play') {
+    const pk = a.park;
+    const leave = state.call && a.friend >= FOLLOW_MIN && Math.hypot(player.x - pk.x, player.z - pk.z) > pk.r + 6;
+    if (leave) {
+      a.park = null;
+      a.state = 'follow';
+    } else {
+      if (!a.target || stepTo(a, a.target.x, a.target.z, 2.6 * slow, dt, 0.25)) {
+        const ang = rnd(0, TAU);
+        const d = Math.sqrt(Math.random()) * pk.r * 0.8;
+        a.target = { x: pk.x + Math.cos(ang) * d, z: pk.z + Math.sin(ang) * d };
+        if (Math.random() < 0.3) a.happy = 1.2;
+      }
+      a.friend = Math.min(100, a.friend + dt * 0.35);
+      pk.active = T;
     }
   } else if (following) {
-    a.state = 'follow';
-    const fx = Math.sin(player.yaw);
-    const fz = Math.cos(player.yaw);
-    const rx = fz;
-    const rz = -fx;
-    const isDog = a.kind === 'dog';
-    const back = isDog ? 2.0 : 2.6;
-    const side = isDog ? -0.9 : 0.9;
-    const tx = player.x - fx * back + rx * side;
-    const tz = player.z - fz * back + rz * side;
-    const pd = Math.hypot(player.x - a.x, player.z - a.z);
-    stepTo(a, tx, tz, pd > 5 ? SPRINT_SPEED * 0.95 : a.speed * 1.8, dt, 0.6);
-    if (pd > 4) a.moving = true;
-    if (pd < 3) a.yaw = angleLerp(a.yaw, Math.atan2(player.x - a.x, player.z - a.z), Math.min(1, dt * 4));
-    a.friend = Math.min(100, a.friend + dt * 0.3);
+    const park = parks.find((pk) => Math.hypot(a.x - pk.x, a.z - pk.z) < pk.r && Math.hypot(player.x - pk.x, player.z - pk.z) < pk.r + 2);
+    if (park) {
+      a.state = 'play';
+      a.park = park;
+      a.home = { x: park.x, z: park.z, r: park.r * 0.8 };
+      a.target = null;
+      toast(`${a.name} is playing in the park! 🎾`);
+    } else {
+      a.state = 'follow';
+      const fx = Math.sin(player.yaw);
+      const fz = Math.cos(player.yaw);
+      const isDog = a.kind === 'dog';
+      const back = isDog ? 2.0 : 2.6;
+      const side = isDog ? -0.9 : 0.9;
+      const tx = player.x - fx * back + fz * side;
+      const tz = player.z - fz * back - fx * side;
+      const pd = Math.hypot(player.x - a.x, player.z - a.z);
+      stepTo(a, tx, tz, (pd > 5 ? SPRINT_SPEED * 0.95 : a.speed * 1.8) * (pd > 5 ? 1 : slow), dt, 0.6);
+      if (pd < 3) a.yaw = angleLerp(a.yaw, Math.atan2(player.x - a.x, player.z - a.z), Math.min(1, dt * 4));
+      a.friend = Math.min(100, a.friend + dt * 0.3);
+    }
   } else if (a.state === 'follow') {
     a.state = 'idle';
     a.timer = 1;
+    a.home = { x: a.x, z: a.z, r: 3 };
   } else if (a.state === 'idle') {
     a.timer -= dt;
     const pd = Math.hypot(player.x - a.x, player.z - a.z);
     if (pd < 4) a.yaw = angleLerp(a.yaw, Math.atan2(player.x - a.x, player.z - a.z), Math.min(1, dt * 4));
     if (a.timer <= 0) pickWander(a);
   } else if (a.state === 'walk') {
-    if (stepTo(a, a.target.x, a.target.z, a.speed, dt, 0.1)) {
+    if (stepTo(a, a.target.x, a.target.z, a.speed * slow, dt, 0.1)) {
       a.state = 'idle';
       a.timer = rnd(2, 5);
+    }
+  }
+
+  // feeling sick: occasional sad bubble
+  if (needsVet(a)) {
+    a.sadT -= dt;
+    if (a.sadT <= 0) {
+      a.sadT = rnd(7, 14);
+      bubble(a.sick ? '🤒' : '🩺?', a.x, a.cfg.height + 0.3, a.z, { size: 52, bg: false, life: 1.4 });
     }
   }
 
   a.root.position.set(a.x, 0, a.z);
   a.root.rotation.y = a.yaw;
   a.shadow.position.set(a.x, 0.01, a.z);
-
-  a.gait += dt * a.speed * 7;
+  a.gait += dt * a.speed * (a.state === 'play' ? 11 : 7);
   const s = Math.sin(a.gait) * 0.55 * (a.moving ? 1 : 0);
   a.legs[0].rotation.x = s;
   a.legs[1].rotation.x = -s;
   a.legs[2].rotation.x = -s;
   a.legs[3].rotation.x = s;
   a.holder.position.y = a.moving ? Math.abs(Math.sin(a.gait)) * 0.03 : 0;
-  a.root.position.y = a.kind === 'dog' && a.happy > 0 ? Math.abs(Math.sin(t * 9)) * 0.14 : 0;
-
-  const wantNeck = a.state === 'eat' ? 0.95 : Math.sin(t * 2 + a.x) * 0.04;
+  const hop = (a.kind === 'dog' && a.happy > 0) || (a.state === 'play' && a.happy > 0);
+  a.root.position.y = hop ? Math.abs(Math.sin(t * 9)) * 0.14 * a.cfg.scale : 0;
+  const wantNeck = a.state === 'eat' ? 0.95 : (a.sick ? 0.3 : 0) + Math.sin(t * 2 + a.x) * 0.04;
   a.neckX = lerp(a.neckX, wantNeck, Math.min(1, dt * 6));
   a.neck.rotation.x = a.neckX;
   a.tongue.visible = a.happy > 0 || a.state === 'eat';
-
   if (a.kind === 'dog') {
-    const excited = a.happy > 0 || a.state === 'follow';
+    const excited = a.happy > 0 || a.state === 'follow' || a.state === 'play';
     a.tail.rotation.y = Math.sin(t * (excited ? 18 : 6)) * (excited ? 0.7 : 0.3);
   } else {
-    a.tail.rotation.x = Math.sin(t * 2) * 0.12 - (a.happy > 0 ? 0.2 : 0);
+    a.tail.rotation.x = Math.sin(t * 2) * 0.12 - (a.happy > 0 || a.state === 'play' ? 0.2 : 0);
   }
 }
 
@@ -1457,12 +1855,67 @@ function petAnimal(a) {
   if (a.kind === 'dog') {
     SFX.bark(spatial(a.x, a.z));
     bubble('Woof! Woof!', a.x, a.cfg.height + 0.4, a.z, { life: 1.2 });
-    toast('The dog barked happily! 🐶');
+    toast('Capi barked happily! 🐶');
   } else {
     SFX.meow(spatial(a.x, a.z));
     SFX.purr(spatial(a.x, a.z));
     bubble('Purr…', a.x, a.cfg.height + 0.3, a.z, { life: 1.2 });
-    toast('The cat is purring 🐱');
+    toast('June is purring 🐱');
+  }
+}
+
+/* ====================================================================
+   Health: vet check-ups every 3 days and random sickness
+   ==================================================================== */
+function updateHealth() {
+  const hour = Math.floor(state.tod);
+  if (hour !== state.lastHour) {
+    state.lastHour = hour;
+    for (const a of animalList) {
+      if (!a.sick && Math.random() < SICK_CHANCE_PER_HOUR) {
+        a.sick = true;
+        toast(`${a.name} feels sick! 🤒 Take ${a.kind === 'dog' ? 'him' : 'her'} to a vet (open the map 🗺).`);
+      }
+      if (needsVet(a)) {
+        a.friend = Math.max(0, a.friend - 0.3);
+        if (!a.sick && !a.dueNotified) {
+          a.dueNotified = true;
+          toast(`${a.name} needs a vet check-up (every ${VET_EVERY_DAYS} days) 🏥`);
+        }
+      }
+    }
+  }
+  // treat animals that are at a vet together with you
+  for (const v of vets) {
+    v.cross.rotation.y += 0.02;
+    if (Math.hypot(player.x - v.x, player.z - v.z) > 7) continue;
+    for (const a of animalList) {
+      if (needsVet(a) && Math.hypot(a.x - v.x, a.z - v.z) < 9) treatAnimal(a);
+    }
+  }
+}
+
+function treatAnimal(a) {
+  a.sick = false;
+  a.lastVet = state.day;
+  a.dueNotified = false;
+  a.friend = Math.min(100, a.friend + 5);
+  a.happy = 1.5;
+  SFX.chime();
+  bubble('✚ Healthy!', a.x, a.cfg.height + 0.4, a.z, { life: 1.6, color: '#d32f2f' });
+  toast(`The vet checked ${a.name}. Healthy! Next check-up on day ${state.day + VET_EVERY_DAYS}.`);
+}
+
+function visitVet(v) {
+  const due = animalList.filter(needsVet);
+  if (!due.length) {
+    const next = Math.min(...animalList.map((a) => a.lastVet + VET_EVERY_DAYS));
+    toast(`Your pets are healthy. Next check-up: day ${next}.`);
+    return;
+  }
+  const away = due.filter((a) => Math.hypot(a.x - v.x, a.z - v.z) >= 9);
+  if (away.length) {
+    toast(`Bring ${away.map((a) => a.name).join(' and ')} here: press Call 🐾 so they follow you.`);
   }
 }
 
@@ -1507,12 +1960,10 @@ function buildCrow(x, z) {
     x, y: 0, z, yaw: rnd(0, TAU),
     home: { x, z },
     mode: 'walk', stage: '', target: null,
-    idle: rnd(0, 3), plateBound: false, cawT: rnd(4, 10), flap: 0,
+    idle: rnd(0, 3), plateBound: null, cawT: rnd(4, 10), flap: 0,
   };
-  body.userData.pick = { kind: 'crow', ref: c };
-  head.userData.pick = { kind: 'crow', ref: c };
-  pickables.add(body);
-  pickables.add(head);
+  pickable(body, 'crow', c);
+  pickable(head, 'crow', c);
   return c;
 }
 
@@ -1525,9 +1976,11 @@ function buildCrows() {
 }
 
 function pickCrowTarget(c) {
-  if (state.plateFood && Math.random() < 0.5) {
-    c.target = { x: PLATE.x + rnd(-0.5, 0.5), z: PLATE.z + rnd(-0.5, 0.5) };
-    c.plateBound = true;
+  const full = plates.filter((p) => p.food);
+  if (full.length && Math.random() < 0.5) {
+    const p = full[(Math.random() * full.length) | 0];
+    c.target = { x: p.x + rnd(-0.5, 0.5), z: p.z + rnd(-0.5, 0.5) };
+    c.plateBound = p;
   } else {
     const a = rnd(0, TAU);
     const d = rnd(1, 6);
@@ -1542,7 +1995,7 @@ function takeoff(c, caw) {
   const dz = c.z - player.z;
   const L = Math.hypot(dx, dz) || 1;
   c.target = { x: c.x + (dx / L) * 34, y: 14 + rnd(0, 5), z: c.z + (dz / L) * 34 };
-  c.plateBound = false;
+  c.plateBound = null;
   if (caw) SFX.caw(spatial(c.x, c.z));
 }
 
@@ -1576,13 +2029,12 @@ function updateCrow(c, dt, t) {
         c.yaw = angleLerp(c.yaw, Math.atan2(dx, dz), Math.min(1, dt * 8));
       }
       if (d <= 0.15) {
-        const wasPlate = c.plateBound;
+        const p = c.plateBound;
         c.target = null;
-        c.plateBound = false;
-        if (wasPlate && state.plateFood && pd >= 4 && Math.hypot(c.x - PLATE.x, c.z - PLATE.z) < 1.4) {
-          state.plateFood = false;
-          setPlateFood(false);
-          toast('The crow stole the food from the plate!');
+        c.plateBound = null;
+        if (p && p.food && pd >= 4 && Math.hypot(c.x - p.x, c.z - p.z) < 1.4) {
+          setPlateFood(p, false);
+          toast(`A crow stole ${NAMES[p.who]}'s food!`);
           takeoff(c, true);
         } else {
           c.idle = rnd(1, 3.5);
@@ -1660,7 +2112,6 @@ function buildFlyers() {
   }
   scene.add(petalMesh);
   scene.add(leafMesh);
-
   rainMesh = new THREE.InstancedMesh(
     new THREE.BoxGeometry(0.02, 0.7, 0.02),
     new THREE.MeshBasicMaterial({ color: 0xcfe6ff, transparent: true, opacity: 0.5, fog: false, depthWrite: false }),
@@ -1668,9 +2119,7 @@ function buildFlyers() {
   );
   rainMesh.frustumCulled = false;
   rainMesh.count = 0;
-  for (let i = 0; i < RAIN_N; i++) {
-    rainDrops.push({ x: rnd(-16, 16), y: rnd(0, 18), z: rnd(-16, 16), sp: rnd(14, 20) });
-  }
+  for (let i = 0; i < RAIN_N; i++) rainDrops.push({ x: rnd(-16, 16), y: rnd(0, 18), z: rnd(-16, 16), sp: rnd(14, 20) });
   scene.add(rainMesh);
 }
 
@@ -1771,7 +2220,9 @@ function updateBubbles(dt) {
 /* ====================================================================
    Player: a lemon with a face
    ==================================================================== */
-const player = { x: SPAWN.x, z: SPAWN.z, yaw: Math.PI, group: null, body: null, carry: null, walkT: 0, stepT: 0, blob: null, speed: 0 };
+const player = { x: SPAWN.x, z: SPAWN.z, yaw: Math.PI, group: null, body: null, hand: {}, eatLemon: null, walkT: 0, stepT: 0, blob: null };
+const HAND_POS = new THREE.Vector3(0.3, 0.3, 0.2);
+const MOUTH_POS = new THREE.Vector3(0, 0.46, 0.34);
 
 function buildPlayer() {
   const g = new THREE.Group();
@@ -1800,24 +2251,100 @@ function buildPlayer() {
   leaf.position.set(0.04, 0.84, 0);
   leaf.rotation.z = -0.6;
   g.add(leaf);
-  const carry = new THREE.Group();
-  carry.position.set(0.3, 0.3, 0.2);
+
+  // items held in the hand (one is visible, depending on the selected slot)
+  const food = new THREE.Group();
   const cup = new THREE.Mesh(geo.bowlCup, mats.bowl);
   cup.scale.setScalar(0.35);
-  carry.add(cup);
+  food.add(cup);
   for (let i = 0; i < 5; i++) {
     const k = new THREE.Mesh(geo.smallSphere, mats.kibble);
     k.scale.setScalar(0.04);
     k.position.set(Math.cos(i) * 0.05, 0.05, Math.sin(i) * 0.05);
-    carry.add(k);
+    food.add(k);
   }
-  carry.visible = false;
-  g.add(carry);
+  const catfood = new THREE.Group();
+  const can = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.08, 0.1, 12), mats.can);
+  const fish = new THREE.Mesh(geo.smallSphere, mats.fish);
+  fish.scale.set(0.07, 0.03, 0.04);
+  fish.position.y = 0.06;
+  catfood.add(can, fish);
+  const lemonHand = new THREE.Mesh(geo.lemon, mats.lemon);
+  lemonHand.scale.setScalar(0.25);
+  lemonHand.rotation.z = Math.PI / 2;
+  const torch = buildTorchMesh(true);
+  torch.scale.setScalar(0.5);
+  torch.position.y = -0.25;
+  const torchHolder = new THREE.Group();
+  torchHolder.add(torch);
+  torchHolder.userData.flame = torch.userData.flame;
+  for (const [k, m] of Object.entries({ food, catfood, lemon: lemonHand, torch: torchHolder })) {
+    m.position.copy(HAND_POS);
+    if (k === 'torch') m.position.y += 0.05;
+    m.visible = false;
+    g.add(m);
+    player.hand[k] = m;
+  }
+  const eatLemon = new THREE.Mesh(geo.lemon, mats.lemon);
+  eatLemon.scale.setScalar(0.25);
+  eatLemon.rotation.z = Math.PI / 2;
+  eatLemon.visible = false;
+  g.add(eatLemon);
+  player.eatLemon = eatLemon;
+
   shadowAll(g);
   player.group = g;
   player.body = body;
-  player.carry = carry;
   player.blob = makeBlob(0.9);
+}
+
+function selectedType() {
+  const s = state.inv[state.sel];
+  return s ? s.type : null;
+}
+
+function startEat() {
+  if (state.eatT > 0) return;
+  const idx = state.inv[state.sel] && state.inv[state.sel].type === 'lemon' ? state.sel : state.inv.findIndex((s) => s && s.type === 'lemon');
+  if (idx < 0) {
+    toast('You have no lemons. Pick some up in the grass.');
+    return;
+  }
+  if (state.hunger >= 100) {
+    toast('You are not hungry right now.');
+    return;
+  }
+  removeOne(idx);
+  state.eatT = EAT_TIME;
+  player.eatBites = 0;
+}
+
+function updateEating(dt) {
+  const el = player.eatLemon;
+  if (state.eatT <= 0) {
+    el.visible = false;
+    return;
+  }
+  state.eatT = Math.max(0, state.eatT - dt);
+  const p = 1 - state.eatT / EAT_TIME;          // 0 -> 1
+  el.visible = true;
+  const toMouth = smoothstep(0, 0.25, p);
+  el.position.lerpVectors(HAND_POS, MOUTH_POS, toMouth);
+  el.position.y += toMouth * Math.abs(Math.sin(p * 18)) * 0.03;
+  el.scale.setScalar(0.25 * (1 - 0.8 * smoothstep(0.25, 1, p)));
+  player.body.scale.y = 0.8 * (1 + Math.sin(p * 40) * 0.04 * toMouth);
+  const bites = Math.floor(p * 4);
+  if (bites > player.eatBites && p > 0.25) {
+    player.eatBites = bites;
+    SFX.chomp(spatial(player.x, player.z));
+  }
+  if (state.eatT === 0) {
+    el.visible = false;
+    state.hunger = Math.min(100, state.hunger + LEMON_FILL);
+    SFX.ding(spatial(player.x, player.z));
+    bubble('Yum!', player.x, 1.3, player.z, { size: 44, life: 1 });
+    toast('Tasty lemon! Hunger restored 🍋');
+  }
 }
 
 function updatePlayer(dt) {
@@ -1868,7 +2395,6 @@ function updatePlayer(dt) {
       state.sprintCD = 0.8;
     }
     if (state.hunger <= 0) speed *= 0.7;
-    player.speed = speed;
     player.x += mx * speed * dt;
     player.z += mz * speed * dt;
     player.yaw = angleLerp(player.yaw, Math.atan2(mx, mz), Math.min(1, dt * 10));
@@ -1898,11 +2424,12 @@ function updatePlayer(dt) {
   player.group.position.set(player.x, 0, player.z);
   player.group.rotation.y = player.yaw;
   player.body.position.y = 0.42 + (moving ? Math.abs(Math.sin(player.walkT)) * 0.05 : 0);
-  player.body.scale.set(0.8, 0.8 + (moving ? Math.sin(player.walkT * 2) * 0.03 : 0), 0.8);
+  if (state.eatT <= 0) player.body.scale.set(0.8, 0.8 + (moving ? Math.sin(player.walkT * 2) * 0.03 : 0), 0.8);
   player.blob.position.set(player.x, 0.01, player.z);
-  const holdingFood = state.inv[state.sel] && state.inv[state.sel].type === 'food';
-  player.carry.visible = !!holdingFood;
+  const sel = selectedType();
+  for (const [k, m] of Object.entries(player.hand)) m.visible = k === sel && !(k === 'lemon' && state.eatT > 0);
   player.group.visible = !state.sleeping;
+  updateEating(dt);
   updateChunks();
 }
 
@@ -1922,13 +2449,8 @@ function updateCamera(dt) {
 }
 
 /* ====================================================================
-   Inventory (5 slots), hunger and actions
+   Inventory (5 slots) and actions
    ==================================================================== */
-const ITEMS = {
-  food: { icon: '🥣', name: 'Dog food' },
-  lemon: { icon: '🍋', name: 'Lemon' },
-};
-
 function addItem(type, n = 1) {
   let left = n;
   for (const s of state.inv) {
@@ -1966,6 +2488,8 @@ function renderInv() {
     el.querySelector('.count').textContent = s && s.n > 1 ? s.n : '';
     el.title = s ? ITEMS[s.type].name : 'Empty';
   });
+  const s = state.inv[state.sel];
+  $('selLbl').textContent = s ? ITEMS[s.type].name : '';
 }
 
 function selectSlot(i) {
@@ -1978,70 +2502,82 @@ function selectSlot(i) {
 }
 
 function useSelected() {
-  const s = state.inv[state.sel];
-  if (!s) {
+  const t = selectedType();
+  if (!t) {
     toast('This slot is empty.');
-    return;
-  }
-  if (s.type === 'lemon') {
-    if (state.hunger >= 100) {
-      toast('You are not hungry right now.');
-      return;
-    }
-    state.hunger = Math.min(100, state.hunger + LEMON_FILL);
-    removeOne(state.sel);
-    SFX.ding(spatial(player.x, player.z));
-    bubble('Yum!', player.x, 1.3, player.z, { size: 44, life: 1 });
-    toast('Tasty lemon! Hunger restored.');
+  } else if (t === 'lemon') {
+    startEat();
+  } else if (t === 'torch') {
+    const s = Math.sin(player.yaw);
+    const c = Math.cos(player.yaw);
+    placeTorch(player.x + s * 1.2, player.z + c * 1.2);
+  } else if (t === 'food') {
+    toast("Tap Capi's plate to serve the food.");
   } else {
-    toast('Tap the plate to serve the dog food.');
+    toast("Tap June's plate to serve the food.");
   }
+}
+
+function giveItems(type, n, label, x, z) {
+  const got = addItem(type, n);
+  if (!got) {
+    toast('Your inventory is full.');
+    return false;
+  }
+  bubble(`+${got} ${ITEMS[type].icon}`, x, 2.4, z, { size: 44, life: 1.2 });
+  toast(label.replace('{n}', got));
+  return true;
 }
 
 function grabFood() {
-  if (!addItem('food', 1)) {
-    toast('Your inventory is full.');
-    return;
-  }
-  SFX.pick(spatial(HOUSE.x, HOUSE.z));
-  bubble('+1 🥣', player.x, 1.4, player.z, { size: 44, life: 1 });
-  toast('You took a portion of dog food.');
+  if (giveItems('food', 1, 'You took {n} portion of Capi food.', player.x, player.z)) SFX.pick(spatial(HOUSE.x, HOUSE.z));
 }
-
 function takeFromShed() {
-  const got = addItem('food', 3);
-  if (!got) {
-    toast('Your inventory is full.');
-    return;
+  if (giveItems('food', 3, 'Capi Food: you took {n} portions of Capi food.', SHED.x, SHED.z)) SFX.chime();
+}
+function takeFromJuneShop() {
+  if (giveItems('catfood', 3, 'June Food: you took {n} portions of June food.', JUNE_SHOP.x, JUNE_SHOP.z)) SFX.chime();
+}
+function openChest() {
+  if (giveItems('torch', 3, 'Chest Shop: you took {n} torches from the chest 🔥', CHEST_SHOP.x, CHEST_SHOP.z)) {
+    SFX.chest(spatial(CHEST_SHOP.x, CHEST_SHOP.z));
+    chestOpenT = 1.4;
   }
-  SFX.chime();
-  bubble('+3 🥣', SHED.x, 2.4, SHED.z, { size: 44, life: 1.2 });
-  toast('Capi Food: you took 3 portions of dog food.');
 }
 
-function placeFood() {
-  if (state.plateFood) {
+function placeFood(p) {
+  if (p.food) {
     toast('The plate is already full.');
     return;
   }
-  let idx = state.inv[state.sel] && state.inv[state.sel].type === 'food' ? state.sel : -1;
-  if (idx < 0) idx = state.inv.findIndex((s) => s && s.type === 'food');
+  const type = p.who === 'dog' ? 'food' : 'catfood';
+  let idx = selectedType() === type ? state.sel : -1;
+  if (idx < 0) idx = state.inv.findIndex((s) => s && s.type === type);
   if (idx < 0) {
-    toast('You have no dog food. Take some from the doghouse or Capi Food.');
+    toast(p.who === 'dog'
+      ? 'You have no Capi food. Get some at Capi Food or the doghouse.'
+      : 'You have no June food. Get some at June Food.');
     return;
   }
   removeOne(idx);
-  state.plateFood = true;
-  setPlateFood(true);
-  SFX.place(spatial(PLATE.x, PLATE.z));
-  toast('Food on the plate. The dog is coming!');
-  if (animals.dog.state !== 'eat') animals.dog.state = 'plate';
+  setPlateFood(p, true);
+  SFX.place(spatial(p.x, p.z));
+  const a = p.who === 'dog' ? animals.dog : animals.cat;
+  toast(`Food on the plate. ${a.name} is coming!`);
+  if (a.state !== 'eat') {
+    a.state = 'plate';
+    a.plate = p;
+    a.park = null;
+  }
 }
 
 function collectLemon(rec) {
   if (rec.done) return;
   if (!addItem('lemon', 1)) {
-    if (Math.hypot(rec.x - player.x, rec.z - player.z) < 0.7) toast('Your inventory is full.');
+    if (Math.hypot(rec.x - player.x, rec.z - player.z) < 0.7 && !rec.fullWarned) {
+      rec.fullWarned = true;
+      toast('Your inventory is full.');
+    }
     return;
   }
   rec.done = true;
@@ -2071,7 +2607,7 @@ function tryBed() {
     $('fade').classList.remove('on');
     setTimeout(() => {
       state.sleeping = false;
-      toast('You slept well. Good morning!');
+      toast(`Day ${state.day}. You slept well. Good morning!`);
     }, 900);
   }, 1200);
 }
@@ -2083,13 +2619,10 @@ function toggleCall() {
     toast('Your friends are staying put.');
     return;
   }
-  if (animals.dog.friend < FOLLOW_MIN && animals.cat.friend < FOLLOW_MIN) {
-    toast('Nobody trusts you enough yet. Pet them more!');
-  } else if (animals.cat.friend < FOLLOW_MIN) {
-    toast('Calling your friends! The cat does not trust you enough yet.');
-  } else {
-    toast('Calling your friends! 🐾');
-  }
+  const lonely = animalList.filter((a) => a.friend < FOLLOW_MIN).map((a) => a.name);
+  if (lonely.length === animalList.length) toast('Nobody trusts you enough yet. Pet them more!');
+  else if (lonely.length) toast(`Calling your friends! ${lonely.join(' and ')} does not trust you enough yet.`);
+  else toast('Calling your friends! 🐾');
   SFX.click();
 }
 
@@ -2097,12 +2630,22 @@ function executeGoal(g) {
   switch (g.kind) {
     case 'food': grabFood(); break;
     case 'shed': takeFromShed(); break;
+    case 'juneshop': takeFromJuneShop(); break;
+    case 'chest': openChest(); break;
     case 'bed': tryBed(); break;
-    case 'plate': placeFood(); break;
+    case 'plate': placeFood(g.ref); break;
     case 'dog':
     case 'cat': petAnimal(g.ref); break;
     case 'crow': scareCrow(g.ref); break;
     case 'lemon': collectLemon(g.ref); break;
+    case 'torch': pickupTorch(g.ref); break;
+    case 'vet': visitVet(g.ref); break;
+    case 'placeTorch': placeTorch(g.x, g.z); break;
+    case 'waypoint':
+      clearWaypoint();
+      SFX.chime();
+      toast('You reached the waypoint! 📍');
+      break;
     default: break;
   }
 }
@@ -2116,7 +2659,188 @@ function toast(msg) {
   el.textContent = msg;
   el.classList.add('show');
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => el.classList.remove('show'), 2200);
+  toastTimer = setTimeout(() => el.classList.remove('show'), 2600);
+}
+
+/* ====================================================================
+   Waypoint, minimap and big map
+   ==================================================================== */
+let beacon = null;
+const mapView = { range: 140, open: false };
+let miniT = 0;
+
+function buildBeacon() {
+  beacon = new THREE.Group();
+  const beam = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.18, 40, 10, 1, true), mats.beacon);
+  beam.position.y = 20;
+  const ring = new THREE.Mesh(new THREE.TorusGeometry(0.9, 0.08, 6, 30), mats.beacon);
+  ring.rotation.x = Math.PI / 2;
+  ring.position.y = 0.1;
+  beacon.add(beam, ring);
+  beacon.userData.ring = ring;
+  beacon.visible = false;
+  scene.add(beacon);
+}
+
+function setWaypoint(x, z, walk = true) {
+  state.waypoint = { x, z };
+  beacon.position.set(x, 0, z);
+  beacon.visible = true;
+  const d = Math.round(Math.hypot(x - player.x, z - player.z));
+  if (walk) goal = { kind: 'waypoint', x, z, range: RANGE.waypoint };
+  toast(`Waypoint set ${d} m away. ${walk ? 'Walking there… (hold SPRINT/Shift to run)' : ''}`);
+}
+
+function clearWaypoint() {
+  state.waypoint = null;
+  beacon.visible = false;
+  if (goal && goal.kind === 'waypoint') goal = null;
+}
+
+function goToWaypoint() {
+  if (!state.waypoint) return;
+  goal = { kind: 'waypoint', x: state.waypoint.x, z: state.waypoint.z, range: RANGE.waypoint };
+  toast('Walking to the waypoint…');
+}
+
+function drawMap(cv, range, big) {
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  const W = cv.clientWidth;
+  const H = cv.clientHeight;
+  if (!W || !H) return;
+  if (cv.width !== Math.round(W * dpr) || cv.height !== Math.round(H * dpr)) {
+    cv.width = Math.round(W * dpr);
+    cv.height = Math.round(H * dpr);
+  }
+  const g = cv.getContext('2d');
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  const cx = player.x;
+  const cz = player.z;
+  const s = Math.min(W, H) / 2 / range;
+  const toS = (x, z) => [W / 2 + (x - cx) * s, H / 2 + (z - cz) * s];
+
+  const bg = g.createRadialGradient(W / 2, H / 2, 10, W / 2, H / 2, Math.max(W, H) * 0.7);
+  bg.addColorStop(0, '#6cb44a');
+  bg.addColorStop(1, '#3f7f2e');
+  g.fillStyle = bg;
+  g.fillRect(0, 0, W, H);
+
+  if (big) {
+    const step = range > 300 ? 100 : range > 120 ? 50 : 20;
+    g.strokeStyle = 'rgba(255,255,255,0.12)';
+    g.lineWidth = 1;
+    g.beginPath();
+    for (let x = Math.floor((cx - range * 2) / step) * step; x < cx + range * 2; x += step) {
+      const [sx] = toS(x, 0);
+      g.moveTo(sx, 0);
+      g.lineTo(sx, H);
+    }
+    for (let z = Math.floor((cz - range * 2) / step) * step; z < cz + range * 2; z += step) {
+      const [, sy] = toS(0, z);
+      g.moveTo(0, sy);
+      g.lineTo(W, sy);
+    }
+    g.stroke();
+    g.fillStyle = 'rgba(255,255,255,0.8)';
+    g.font = '600 11px system-ui, sans-serif';
+    g.textAlign = 'left';
+    g.fillText(`grid: ${step} m · N ↑`, 8, H - 8);
+  }
+
+  // torches
+  g.fillStyle = '#ffb347';
+  for (const t of torches) {
+    const [x, y] = toS(t.x, t.z);
+    if (x > 0 && x < W && y > 0 && y < H) g.fillRect(x - 1.5, y - 1.5, 3, 3);
+  }
+
+  g.textAlign = 'center';
+  g.textBaseline = 'middle';
+  for (const p of pois) {
+    if (!big && p.type === 'plate') continue;
+    let [x, y] = toS(p.x, p.z);
+    const pad = big ? 14 : 9;
+    const inside = x >= pad && x <= W - pad && y >= pad && y <= H - pad;
+    if (!inside) {
+      if (p.type !== 'vet' && p.type !== 'park') continue;
+      x = clamp(x, pad, W - pad);
+      y = clamp(y, pad, H - pad);
+      g.globalAlpha = 0.6;
+    }
+    g.font = `${big ? 20 : 12}px system-ui, sans-serif`;
+    g.fillText(p.icon, x, y);
+    const showLabel = p.type === 'vet' || p.type === 'park' || range <= 60;
+    if (big && inside && p.label && showLabel) {
+      g.font = '700 11px system-ui, sans-serif';
+      g.fillStyle = 'rgba(0,0,0,0.55)';
+      g.fillText(p.label, x + 1, y + 17);
+      g.fillStyle = '#fff';
+      g.fillText(p.label, x, y + 16);
+    }
+    g.globalAlpha = 1;
+  }
+
+  for (const a of animalList) {
+    const [x, y] = toS(a.x, a.z);
+    if (x < 0 || x > W || y < 0 || y > H) continue;
+    g.beginPath();
+    g.arc(x, y, big ? 6 : 4, 0, TAU);
+    g.fillStyle = a.kind === 'dog' ? '#3b3f4a' : '#f0a050';
+    g.fill();
+    g.strokeStyle = needsVet(a) ? '#ff3b3b' : '#fff';
+    g.lineWidth = 2;
+    g.stroke();
+    if (big) {
+      g.fillStyle = '#fff';
+      g.font = '700 11px system-ui, sans-serif';
+      g.fillText(a.name, x, y - 13);
+    }
+  }
+
+  if (state.waypoint) {
+    let [x, y] = toS(state.waypoint.x, state.waypoint.z);
+    x = clamp(x, 8, W - 8);
+    y = clamp(y, 8, H - 8);
+    g.font = `${big ? 24 : 15}px system-ui, sans-serif`;
+    g.fillText('📍', x, y - (big ? 8 : 5));
+  }
+
+  // player arrow
+  const fx = Math.sin(player.yaw);
+  const fz = Math.cos(player.yaw);
+  const L = big ? 11 : 8;
+  g.beginPath();
+  g.moveTo(W / 2 + fx * L, H / 2 + fz * L);
+  g.lineTo(W / 2 - fx * L * 0.6 + fz * L * 0.6, H / 2 - fz * L * 0.6 - fx * L * 0.6);
+  g.lineTo(W / 2 - fx * L * 0.6 - fz * L * 0.6, H / 2 - fz * L * 0.6 + fx * L * 0.6);
+  g.closePath();
+  g.fillStyle = '#ffd83a';
+  g.fill();
+  g.strokeStyle = '#2d2a14';
+  g.lineWidth = 2;
+  g.stroke();
+}
+
+function openMap() {
+  mapView.open = true;
+  $('mapOverlay').classList.remove('hidden');
+  drawMap($('bigMap'), mapView.range, true);
+}
+function closeMap() {
+  mapView.open = false;
+  $('mapOverlay').classList.add('hidden');
+}
+
+function updateMaps(dt) {
+  miniT -= dt;
+  if (miniT <= 0) {
+    miniT = 0.2;
+    drawMap($('minimap'), 60, false);
+  }
+  if (mapView.open) drawMap($('bigMap'), mapView.range, true);
+  if (beacon.visible) {
+    beacon.userData.ring.scale.setScalar(1 + Math.sin(T * 3) * 0.15);
+  }
 }
 
 /* ====================================================================
@@ -2131,6 +2855,7 @@ function refreshHud() {
   const m = Math.floor((state.tod - h) * 60);
   $('timeLbl').textContent = `Day ${state.day} · ${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
   $('weatherLbl').textContent = state.rain > 0.5 ? '🌧 Raining' : isNight() ? '🌙 Night' : '☀️ Clear';
+  $('coordLbl').textContent = `X ${Math.round(player.x)} · Z ${Math.round(player.z)}`;
   $('stamFill').style.width = `${state.stamina}%`;
   document.querySelectorAll('#hungerRow .lem').forEach((el, i) => {
     const f = clamp((state.hunger - i * 20) / 20, 0, 1);
@@ -2140,8 +2865,27 @@ function refreshHud() {
   for (const [k, a] of [['Dog', animals.dog], ['Cat', animals.cat]]) {
     $(`f${k}Lvl`).textContent = friendLabel(a.friend);
     $(`f${k}Bar`).style.width = `${a.friend}%`;
+    const hp = $(`f${k}Hp`);
+    if (a.sick) {
+      hp.textContent = '🤒 Sick – take to a vet';
+      hp.className = 'hp bad';
+    } else if (needsVet(a)) {
+      hp.textContent = '🩺 Vet check-up due';
+      hp.className = 'hp bad';
+    } else {
+      hp.textContent = `✚ Healthy · vet by day ${a.lastVet + VET_EVERY_DAYS}`;
+      hp.className = 'hp';
+    }
   }
   $('callBtn').classList.toggle('on', state.call);
+  const wp = $('wpBtn');
+  if (state.waypoint) {
+    const d = Math.round(Math.hypot(state.waypoint.x - player.x, state.waypoint.z - player.z));
+    wp.classList.remove('hidden');
+    wp.textContent = `📍 ${d} m ${goal && goal.kind === 'waypoint' ? '· going' : '· tap to go'}`;
+  } else {
+    wp.classList.add('hidden');
+  }
 }
 
 /* ====================================================================
@@ -2166,7 +2910,9 @@ function groundAt(x, y) {
 
 const cursorEl = $('cursor');
 const cursorLabel = $('cursorLabel');
-
+function labelOf(pk) {
+  return pk.label || LABELS[pk.kind] || '';
+}
 function placeCursor(x, y) {
   cursorEl.style.transform = `translate3d(${x}px, ${y}px, 0)`;
 }
@@ -2174,10 +2920,12 @@ function setHover(x, y) {
   const obj = pickAt(x, y);
   if (obj) {
     cursorEl.classList.add('hot');
-    cursorLabel.textContent = LABELS[obj.userData.pick.kind] || '';
+    cursorLabel.textContent = labelOf(obj.userData.pick);
   } else {
     cursorEl.classList.remove('hot');
-    cursorLabel.textContent = '';
+    const t = selectedType();
+    cursorLabel.textContent = t === 'lemon' ? 'Eat lemon' : t === 'torch' ? 'Place torch' : '';
+    cursorEl.classList.toggle('hot', !!cursorLabel.textContent);
   }
 }
 function ripple(x, y, label) {
@@ -2193,14 +2941,24 @@ function handleTap(x, y) {
   if (obj) {
     const pk = obj.userData.pick;
     goal = makeGoal(pk);
-    ripple(x, y, LABELS[pk.kind]);
+    ripple(x, y, labelOf(pk));
+    return;
+  }
+  const t = selectedType();
+  if (t === 'lemon') {
+    ripple(x, y, 'Eat lemon');
+    startEat();
     return;
   }
   const p = groundAt(x, y);
-  if (p) {
-    goal = { kind: 'walk', x: p.x, z: p.z, range: RANGE.walk };
-    ripple(x, y, '');
+  if (!p) return;
+  if (t === 'torch') {
+    goal = { kind: 'placeTorch', x: p.x, z: p.z, range: RANGE.placeTorch };
+    ripple(x, y, 'Place torch');
+    return;
   }
+  goal = { kind: 'walk', x: p.x, z: p.z, range: RANGE.walk };
+  ripple(x, y, '');
 }
 
 let drag = null;
@@ -2255,6 +3013,8 @@ function setupInput() {
     if (d) selectSlot(Number(d[1]) - 1);
     if (e.code === 'KeyE') useSelected();
     if (e.code === 'KeyF') toggleCall();
+    if (e.code === 'KeyM') (mapView.open ? closeMap() : openMap());
+    if (e.code === 'Escape' && mapView.open) closeMap();
   });
   window.addEventListener('keyup', (e) => {
     if (e.code === 'ShiftLeft' || e.code === 'ShiftRight') state.sprintKey = false;
@@ -2294,6 +3054,24 @@ function setupInput() {
     el.addEventListener('click', () => { ensureAudio(); selectSlot(i); });
   });
 
+  // map
+  $('btnMap').addEventListener('click', () => { ensureAudio(); openMap(); });
+  $('minimap').addEventListener('click', () => { ensureAudio(); openMap(); });
+  $('mapClose').addEventListener('click', closeMap);
+  $('mapZoomIn').addEventListener('click', () => { mapView.range = Math.max(40, mapView.range / 1.6); });
+  $('mapZoomOut').addEventListener('click', () => { mapView.range = Math.min(900, mapView.range * 1.6); });
+  $('mapClear').addEventListener('click', () => { clearWaypoint(); toast('Waypoint cleared.'); });
+  $('bigMap').addEventListener('click', (e) => {
+    const cv = $('bigMap');
+    const r = cv.getBoundingClientRect();
+    const s = Math.min(r.width, r.height) / 2 / mapView.range;
+    const x = player.x + (e.clientX - r.left - r.width / 2) / s;
+    const z = player.z + (e.clientY - r.top - r.height / 2) / s;
+    closeMap();
+    setWaypoint(x, z, true);
+  });
+  $('wpBtn').addEventListener('click', goToWaypoint);
+
   $('callBtn').addEventListener('click', () => { ensureAudio(); toggleCall(); });
   $('btnSound').addEventListener('click', () => {
     state.muted = !state.muted;
@@ -2328,7 +3106,7 @@ function updateAmbient(dt) {
   if (!actx) return;
   if (rainGain) rainGain.gain.setTargetAtTime(0.22 * state.rain, actx.currentTime, 0.2);
   birdT -= dt;
-  if (birdT <= 0 && state.rain < 0.3) {
+  if (birdT <= 0 && state.rain < 0.3 && !isNight()) {
     birdT = rnd(1.8, 4.5);
     const a = rnd(0, TAU);
     const d = rnd(10, 26);
@@ -2357,14 +3135,23 @@ function frame(now) {
   updateCamera(dt);
   ground.position.set(player.x, 0, player.z);
   updateEnvironment(dt);
-  for (const a of [animals.dog, animals.cat]) updateAnimal(a, dt, T);
+  for (const a of animalList) updateAnimal(a, dt, T);
+  updateHealth();
+  updateParks(dt);
   for (const c of crows) updateCrow(c, dt, T);
+  updateTorches(dt);
   updateFlyers(dt, T);
   updateRain(dt);
   updateBubbles(dt);
   updatePickups(dt);
   updateAmbient(dt);
+  updateMaps(dt);
 
+  if (chestLid) {
+    chestOpenT = Math.max(0, chestOpenT - dt);
+    chestLid.rotation.x = -Math.min(1, chestOpenT * 2) * 1.0;
+    chestLid.position.z = -Math.min(1, chestOpenT * 2) * 0.12;
+  }
   if (state.rain > 0.6) {
     thunderT -= dt;
     if (thunderT <= 0) {
@@ -2372,7 +3159,6 @@ function frame(now) {
       SFX.thunder();
     }
   }
-
   hudT -= dt;
   if (hudT <= 0) {
     hudT = 0.12;
@@ -2413,6 +3199,7 @@ function buildWorld() {
   sunLight.shadow.normalBias = 0.03;
   scene.add(sunLight);
   scene.add(sunLight.target);
+  buildTorchLights();
 
   ground = new THREE.Mesh(new THREE.PlaneGeometry(1200, 1200), mats.ground);
   ground.rotation.x = -Math.PI / 2;
@@ -2422,13 +3209,20 @@ function buildWorld() {
   buildSky();
   buildBackdrop();
   buildHouse();
-  buildPlate();
-  buildShed();
+  buildPlate(CAPI_PLATE, 'dog', mats.rimBlue, mats.kibble);
+  buildPlate(JUNE_PLATE, 'cat', mats.rimPink, mats.fish);
+  buildShop({ pos: SHED, rot: 0.35, wall: mats.wood2, roof: mats.roof, sign: mats.signCapi, kind: 'shed', ref: SHED_REF, icon: '🥣', label: 'Capi Food' });
+  buildShop({ pos: JUNE_SHOP, rot: -0.6, wall: mats.juneWall, roof: mats.juneRoof, sign: mats.signJune, kind: 'juneshop', ref: JUNE_SHOP_REF, icon: '🐟', label: 'June Food' });
+  buildChestShop();
   buildTent();
+  generateRandomPois();
+  for (const v of vets) buildVet(v);
+  for (const pk of parks) buildPark(pk);
   buildAnimals();
   buildCrows();
   buildPlayer();
   buildFlyers();
+  buildBeacon();
   updateChunks(true);
 }
 
@@ -2469,7 +3263,7 @@ async function init() {
   $('loading').classList.add('done');
   // hooks for testing; they do not change the game
   window.lemonDebug = {
-    player, state, animals, crows, plate,
+    player, state, animals, animalList, crows, plates, vets, parks, pois, torches,
     get goal() { return goal; },
     setGoal(g) { goal = g; },
     get camDist() { return camDist; },
@@ -2478,8 +3272,7 @@ async function init() {
     set camYaw(v) { camYaw = v; },
     setTod(v) { state.tod = v; },
     setRain(v) { state.rainTarget = v; state.rain = v; state.rainTimer = 999; },
-    toggleCall,
-    addItem,
+    toggleCall, addItem, placeTorch, setWaypoint, startEat, openMap, closeMap, needsVet,
     chunks: () => chunks.size,
   };
 }

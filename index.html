@@ -275,6 +275,91 @@
     .pc-only { display: block; }
     body.touch .pc-only { display: none !important; }
 
+    /* ---------- health, coordinates, selected item ---------- */
+    .coords { font-variant-numeric: tabular-nums; }
+    .hp { font-size: 11px; margin-top: 2px; color: #2e7d32; font-weight: 700; }
+    .hp.bad { color: #d32f2f; }
+    .sel-lbl {
+      font-size: 12px;
+      font-weight: 800;
+      background: var(--glass);
+      padding: 2px 10px;
+      border-radius: 99px;
+      box-shadow: var(--shadow);
+    }
+    .sel-lbl:empty { display: none; }
+
+    /* ---------- minimap + waypoint ---------- */
+    .map-col {
+      position: fixed;
+      right: 12px;
+      top: 66px;
+      display: flex;
+      flex-direction: column;
+      align-items: flex-end;
+      gap: 6px;
+      z-index: 10;
+    }
+    #minimap {
+      width: 118px;
+      height: 118px;
+      border-radius: 50%;
+      border: 3px solid rgba(255, 253, 236, 0.95);
+      box-shadow: var(--shadow);
+      cursor: pointer;
+      touch-action: manipulation;
+    }
+    #wpBtn {
+      border: 0;
+      border-radius: 99px;
+      padding: 6px 10px;
+      font-weight: 800;
+      font-size: 12px;
+      background: #ff5a36;
+      color: #fff;
+      box-shadow: var(--shadow);
+      cursor: pointer;
+      max-width: 160px;
+    }
+
+    /* ---------- big map ---------- */
+    #mapOverlay { z-index: 35; }
+    .map-card {
+      background: #fffdf0;
+      border-radius: 22px;
+      padding: 14px;
+      width: min(640px, 100%);
+      box-shadow: 0 12px 40px rgba(0, 0, 0, 0.3);
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .map-head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+    .map-hint { font-size: 12px; opacity: 0.7; }
+    #bigMap {
+      width: 100%;
+      aspect-ratio: 1 / 1;
+      max-height: 62vh;
+      border-radius: 16px;
+      cursor: crosshair;
+      touch-action: manipulation;
+    }
+    .map-btns { display: flex; gap: 8px; }
+    .map-btns button { flex: 1; margin: 0; padding: 10px; font-size: 16px; }
+    .map-legend { font-size: 11px; opacity: 0.75; text-align: center; }
+
+    /* ---------- phone: keep the inventory above the arrows ---------- */
+    body.touch .bottom { bottom: 172px; }
+    body.touch .slot { width: 48px; height: 48px; font-size: 22px; }
+    body.touch #minimap { width: 96px; height: 96px; }
+    body.touch .top-right { gap: 5px; right: 8px; top: 8px; }
+    body.touch .round { width: 36px; height: 36px; font-size: 16px; }
+    body.touch .map-col { top: 52px; right: 8px; }
+    body.touch #hud { left: 8px; top: 8px; min-width: 0; width: 168px; padding: 8px 10px; }
+    body.touch #hud .title { font-size: 13px; }
+    body.touch #hud .row { font-size: 12px; }
+    body.touch .hp { font-size: 10px; }
+
     /* ---------- sleep fade ---------- */
     #fade {
       position: fixed;
@@ -398,28 +483,55 @@
   <div id="hud">
     <div class="title">🍋 Lemon Garden</div>
     <div class="time"><span id="timeLbl">Day 1 · 08:00</span> · <span id="weatherLbl">☀️ Clear</span></div>
+    <div class="time coords">📍 <span id="coordLbl">X 0 · Z 4</span></div>
     <div class="row"><span>🍋 Lemons</span><b id="sLemons">0</b></div>
     <div class="row"><span>💗 Pets</span><b id="sPets">0</b></div>
     <div class="row"><span>🍽️ Feedings</span><b id="sFed">0</b></div>
     <div class="friend">
-      <div class="lbl"><span>🐶 Dog</span><span id="fDogLvl">Acquaintance</span></div>
+      <div class="lbl"><span>🐶 Capi</span><span id="fDogLvl">Acquaintance</span></div>
       <div class="bar"><i id="fDogBar"></i></div>
+      <div id="fDogHp" class="hp"></div>
     </div>
     <div class="friend">
-      <div class="lbl"><span>🐱 Cat</span><span id="fCatLvl">Stranger</span></div>
+      <div class="lbl"><span>🐱 June</span><span id="fCatLvl">Stranger</span></div>
       <div class="bar"><i id="fCatBar"></i></div>
+      <div id="fCatHp" class="hp"></div>
     </div>
   </div>
 
   <div class="top-right">
+    <button id="btnMap" class="round" aria-label="Open map">🗺</button>
     <button id="btnRain" class="round" aria-label="Toggle rain">☂</button>
     <button id="btnSound" class="round" aria-label="Sound">🔊</button>
     <button id="btnHelp" class="round" aria-label="Help">?</button>
   </div>
 
+  <div class="map-col">
+    <canvas id="minimap" aria-label="Minimap (tap to open the map)"></canvas>
+    <button id="wpBtn" class="hidden">📍</button>
+  </div>
+
   <div id="toast" role="status"></div>
 
+  <div id="mapOverlay" class="overlay hidden">
+    <div class="map-card">
+      <div class="map-head">
+        <b>🗺 Map</b>
+        <span class="map-hint">Tap the map to set a waypoint</span>
+      </div>
+      <canvas id="bigMap"></canvas>
+      <div class="map-btns">
+        <button id="mapZoomIn" class="secondary">＋</button>
+        <button id="mapZoomOut" class="secondary">－</button>
+        <button id="mapClear" class="secondary">Clear 📍</button>
+        <button id="mapClose" class="primary">Close</button>
+      </div>
+      <div class="map-legend">🏠 home · 🥣 Capi Food · 🐟 June Food · 🧰 Chest Shop · ⛺ tent · 🏥 vet · 🎾 pet park · 🍽️ plate</div>
+    </div>
+  </div>
+
   <div class="bottom">
+    <div id="selLbl" class="sel-lbl"></div>
     <div class="needs">
       <div id="hungerRow" title="Hunger">
         <span class="lem">🍋</span><span class="lem">🍋</span><span class="lem">🍋</span><span class="lem">🍋</span><span class="lem">🍋</span>
@@ -454,14 +566,15 @@
   <div id="start" class="overlay">
     <div class="card">
       <h1>🍋 Lemon Garden</h1>
-      <p>An endless garden with dogs, cats, crows and lemons. Pet them, feed them, make friends and enjoy spring!</p>
+      <p>An endless garden with Capi the dog, June the cat, crows and lemons. Feed them, make friends, take them to the vet every 3 days and to the pet parks, and light the night with torches!</p>
       <div class="ctrl pc">
         <h3>On a computer</h3>
         <ul>
           <li><b>W A S D</b> – move · <b>Shift</b> – sprint</li>
-          <li><b>Left click</b> – pet, take food, serve the plate, sleep in the tent</li>
-          <li><b>1–5</b> – select an inventory slot · <b>E</b> – use it (eat a lemon)</li>
-          <li><b>F</b> – call your friends to follow you</li>
+          <li><b>Left click</b> – pet, shop, serve a plate, open the chest, sleep in the tent</li>
+          <li><b>1–5</b> – select an item · <b>E</b> or click the ground – eat a lemon / place a torch</li>
+          <li><b>F</b> – call Capi and June to follow you</li>
+          <li><b>M</b> – map: click it to set a waypoint and walk there</li>
           <li><b>Drag with the mouse</b> – rotate · <b>Wheel</b> – zoom</li>
         </ul>
       </div>
@@ -469,9 +582,10 @@
         <h3>On a phone</h3>
         <ul>
           <li><b>On-screen arrows</b> – move · <b>SPRINT</b> button – run</li>
-          <li><b>Tap</b> an animal, the food, the plate, the tent or Capi Food</li>
-          <li><b>Tap a selected slot again</b> – use it (eat a lemon)</li>
-          <li><b>Call</b> button – your friends follow you</li>
+          <li><b>Tap</b> an animal, a shop, a plate, the chest or the tent</li>
+          <li>With a <b>lemon</b> selected, tap the screen to eat it · with a <b>torch</b>, tap the ground to place it</li>
+          <li><b>Call</b> button – Capi and June follow you</li>
+          <li><b>🗺</b> or the minimap – tap the map to set a waypoint and walk there</li>
           <li><b>Drag with your finger</b> – rotate the camera</li>
         </ul>
       </div>
