@@ -1,6 +1,6 @@
 /*
-  Grădina cu Lămâi — joc 3D (Three.js), fără build, compatibil GitHub Pages.
-  Totul din interfață este în limba română.
+  Lemon Garden — 3D game (Three.js), no build step, GitHub Pages compatible.
+  All in-game text is in English.
 */
 import * as THREE from 'three';
 
@@ -66,12 +66,12 @@ const SPAWN = { x: 0, z: 4 };
 const PLAYER_SPEED = 3.4;
 const FLOWER_COLORS = [0xffffff, 0xff8fb1, 0xffe14d, 0xc79bff, 0xff9d5c];
 const LABELS = {
-  food: 'Ia mâncare',
-  plate: 'Pune mâncarea',
-  dog: 'Mângâie câinele',
-  cat: 'Mângâie pisica',
-  crow: 'Sperie corbul',
-  lemon: 'Ia lămâia',
+  food: 'Grab food',
+  plate: 'Put food down',
+  dog: 'Pet the dog',
+  cat: 'Pet the cat',
+  crow: 'Scare the crow',
+  lemon: 'Pick up lemon',
 };
 const RANGE = { food: 2.6, plate: 1.9, dog: 2.1, cat: 2.1, crow: 3.2, lemon: 0.9, walk: 0.3 };
 
@@ -1029,8 +1029,8 @@ function updateAnimal(a, dt, t) {
       state.fed++;
       refreshHud();
       SFX.bark(spatial(a.x, a.z));
-      bubble('Nam nam!', a.x, a.cfg.height + 0.25, a.z, { life: 1.3 });
-      toast('Câinele a mâncat! 🐶');
+      bubble('Yum yum!', a.x, a.cfg.height + 0.25, a.z, { life: 1.3 });
+      toast('The dog ate! 🐶');
       if (state.plateFood) a.state = 'plate';
     }
   } else if (a.state === 'idle') {
@@ -1091,12 +1091,12 @@ function petAnimal(a) {
   if (a.kind === 'dog') {
     SFX.bark(spatial(a.x, a.z));
     bubble('Hau! Hau!', a.x, a.cfg.height + 0.4, a.z, { life: 1.2 });
-    toast('Câinele a lătrat de bucurie! 🐶');
+    toast('The dog barked happily! 🐶');
   } else {
     SFX.meow(spatial(a.x, a.z));
     SFX.purr(spatial(a.x, a.z));
-    bubble('Mrrr…', a.x, a.cfg.height + 0.3, a.z, { life: 1.2 });
-    toast('Pisica ronronează 🐱');
+    bubble('Purr…', a.x, a.cfg.height + 0.3, a.z, { life: 1.2 });
+    toast('The cat is purring 🐱');
   }
 }
 
@@ -1188,7 +1188,7 @@ function takeoff(c, caw) {
 function scareCrow(c) {
   if (c.mode !== 'walk') return;
   takeoff(c, true);
-  toast('Corbul a zburat!');
+  toast('The crow flew away!');
 }
 
 function updateCrow(c, dt, t) {
@@ -1225,7 +1225,7 @@ function updateCrow(c, dt, t) {
           state.plateFood = false;
           setPlateFood(false);
           refreshHud();
-          toast('Corbul a furat mâncarea din farfurie!');
+          toast('The crow stole the food from the plate!');
           takeoff(c, true);
           return placeCrow(c, t, dt);
         }
@@ -1552,30 +1552,30 @@ function executeGoal(g) {
 
 function grabFood() {
   if (state.carry >= 3) {
-    toast('Ai deja 3 porții în mână. Pune-le pe farfurie!');
+    toast('You already have 3 portions in hand. Put them on the plate!');
     return;
   }
   state.carry++;
   SFX.pick(spatial(HOUSE.x, HOUSE.z));
   bubble('+1 🥣', player.x, 1.4, player.z, { size: 44, life: 1 });
-  toast('Ai luat o porție de mâncare. Pune-o pe farfurie!');
+  toast('You grabbed a portion of food. Put it on the plate!');
   refreshHud();
 }
 
 function placeFood() {
   if (state.carry <= 0) {
-    toast('Nu ai mâncare în mână. Ia din cușcă!');
+    toast('You have no food in hand. Grab some from the doghouse!');
     return;
   }
   if (state.plateFood) {
-    toast('Farfuria e deja plină.');
+    toast('The plate is already full.');
     return;
   }
   state.carry--;
   state.plateFood = true;
   setPlateFood(true);
   SFX.place(spatial(PLATE.x, PLATE.z));
-  toast('Ai pus mâncarea pe farfurie. Câinele vine!');
+  toast('You put the food on the plate. The dog is coming!');
   if (animals.dog.state !== 'eat') animals.dog.state = 'plate';
   refreshHud();
 }
@@ -1589,7 +1589,7 @@ function collectLemon(rec) {
   state.lemons++;
   SFX.ding(spatial(rec.x, rec.z));
   bubble('+1 🍋', rec.x, 0.9, rec.z, { size: 44, life: 1 });
-  toast('+1 lămâie 🍋');
+  toast('+1 lemon 🍋');
   refreshHud();
 }
 
@@ -1862,7 +1862,7 @@ async function init() {
   try {
     startRenderer();
   } catch (e) {
-    $('loading').textContent = 'Acest dispozitiv nu acceptă grafica 3D (WebGL).';
+    $('loading').textContent = 'This device does not support 3D graphics (WebGL).';
     console.error(e);
     return;
   }
@@ -1895,6 +1895,6 @@ if (!browserOK()) {
 } else {
   init().catch((e) => {
     console.error(e);
-    $('loading').textContent = 'Nu am putut încărca jocul. Reîncarcă pagina.';
+    $('loading').textContent = 'The game could not load. Reload the page.';
   });
 }

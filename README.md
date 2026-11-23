@@ -1,59 +1,58 @@
-# 🍋 Grădina cu Lămâi
+# 🍋 Lemon Garden
 
-Un joc 3D de primăvară, într-o grădină infinită, cu câini, pisici, corbi și lămâi.
-Jocul este scris în Three.js, fără build, deci rulează direct pe GitHub Pages.
+A 3D spring game in an endless garden with dogs, cats, crows and lemons.
+Written with Three.js and no build step, so it runs directly on GitHub Pages.
 
-## Cum se joacă
+## How to play
 
-**Pe calculator**
-- `W A S D` – mișcare
-- `Click stânga` – mângâie animalele, ia mâncare din cușcă, pune mâncarea pe farfurie
-- `Trage cu mouse-ul` – rotește camera · `Rotița mouse-ului` – zoom
+**On a computer**
+- `W A S D` – move
+- `Left click` – pet the animals, grab food from the doghouse, put food on the plate
+- `Drag with the mouse` – rotate the camera · `Mouse wheel` – zoom
 
-**Pe telefon**
-- Săgețile de pe ecran – mișcare (apar doar pe telefon)
-- `Atinge` un animal, cușca sau farfuria – lămâia merge singură și face acțiunea
-- `Trage cu degetul` – rotește camera
+**On a phone**
+- On-screen arrows – move (only shown on phones)
+- `Tap` an animal, the food house or the plate – your lemon walks over and acts
+- `Drag with your finger` – rotate the camera
 
-**Obiectiv**
-1. Mergi la cușca de lângă gard și atinge mâncarea – iei o porție.
-2. Atinge farfuria – câinele vine și mănâncă.
-3. Mângâie câinele (lătrat) și pisica (miau și ronron).
-4. Sperie corbii care vor să fure mâncarea.
-5. Strânge lămâile de pe iarbă.
+**Goal**
+1. Go to the doghouse and tap the food to grab a portion.
+2. Tap the plate – the dog comes over and eats.
+3. Pet the dog (it barks) and the cat (it meows and purrs).
+4. Scare off the crows that try to steal the food.
+5. Collect the lemons lying on the grass.
 
-## Fișiere
+## Files
 
-| Fișier | Rol |
+| File | Purpose |
 | --- | --- |
-| `index.html` | Pagina, interfața în română, stilurile, săgețile pentru telefon |
-| `game.js` | Tot jocul: lumea infinită, animalele 3D, corbii, sunetele, controalele |
-| `assets/dog-face.jpg`, `assets/dog-coat.jpg` | Fața și blana câinelui, decupate din poza originală |
-| `assets/cat-face.jpg`, `assets/cat-coat.jpg` | Fața și blana pisicii, decupate din poza originală |
-| `assets/*-cutout-reference.jpg` | Decupajele complete ale animalelor (pentru referință) |
+| `index.html` | Page, UI text, styles, on-screen arrows |
+| `game.js` | The whole game: endless world, 3D animals, crows, sounds, controls |
+| `assets/dog-face.jpg`, `assets/dog-coat.jpg` | Dog face and coat, cropped from the original photo |
+| `assets/cat-face.jpg`, `assets/cat-coat.jpg` | Cat face and coat, cropped from the original photo |
+| `assets/*-cutout-reference.jpg` | Full cropped animal photos (reference) |
 
-Sunetele sunt generate în browser (Web Audio), deci nu există fișiere audio externe.
+Sounds are generated in the browser with the Web Audio API, so there are no external audio files.
 
-## Browsere acceptate
+## Supported browsers
 
-Jocul funcționează doar în **Safari** și **Chrome**. În alte browsere apare un mesaj.
+Only **Safari** and **Chrome** are supported. Other browsers show a notice.
 
-## Rulare locală
+## Run locally
 
-Orice server static merge, de exemplu:
+Any static server works, for example:
 
 ```bash
 python3 -m http.server 8000
 ```
 
-apoi deschide `http://localhost:8000`. Este nevoie de conexiune la internet, pentru că Three.js
-se încarcă de pe `cdn.jsdelivr.net`.
+then open `http://localhost:8000`. An internet connection is needed because Three.js loads from `cdn.jsdelivr.net`.
 
-## Publicare pe GitHub Pages
+## Publish on GitHub Pages
 
-1. Pe GitHub, mergi la **Settings → Pages**.
-2. La **Build and deployment**, alege **Deploy from a branch**.
-3. Alege ramura cu jocul (de exemplu `main`, sau `claude/jolly-maxwell-szh7bq`) și folderul `/ (root)`.
-4. După câteva minute, jocul este la `https://<utilizator>.github.io/LemonGame/`.
+1. On GitHub, go to **Settings → Pages**.
+2. Under **Build and deployment**, choose **Deploy from a branch**.
+3. Pick the branch with the game (for example `main`, or `claude/jolly-maxwell-szh7bq`) and the `/ (root)` folder.
+4. After a few minutes the game is at `https://<user>.github.io/LemonGame/`.
 
-Toate căile sunt relative (`./game.js`, `./assets/...`), deci funcționează și într-un subfolder.
+All paths are relative (`./game.js`, `./assets/...`), so it also works from a subfolder.

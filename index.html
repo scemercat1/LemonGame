@@ -1,12 +1,12 @@
 <!doctype html>
-<html lang="ro">
+<html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1, user-scalable=no">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="theme-color" content="#7fc8f0">
-  <meta name="description" content="Grădina cu Lămâi — o grădină 3D infinită cu câini, pisici, corbi și lămâi.">
-  <title>Grădina cu Lămâi</title>
+  <meta name="description" content="Lemon Garden — an endless 3D garden with dogs, cats, crows and lemons.">
+  <title>Lemon Garden</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Cellipse cx='50' cy='56' rx='34' ry='40' fill='%23ffd83a'/%3E%3Cpath d='M50 16 q8 -12 20 -10 q-6 11 -20 10z' fill='%233f9d2c'/%3E%3C/svg%3E">
   <style>
     :root {
@@ -41,7 +41,7 @@
       outline: none;
       touch-action: none;
     }
-    /* Pe calculator: cursor personalizat (ascuns cel normal) */
+    /* On a computer: cursor personalizat (ascuns cel normal) */
     body:not(.touch) #scene { cursor: none; }
 
     #cursor {
@@ -259,62 +259,62 @@
   </script>
 </head>
 <body>
-  <canvas id="scene" aria-label="Grădina cu Lămâi"></canvas>
+  <canvas id="scene" aria-label="Lemon Garden"></canvas>
   <div id="cursor"><span id="cursorLabel"></span></div>
 
   <div id="hud">
-    <div class="title">🍋 Grădina cu Lămâi</div>
-    <div class="row"><span>🍋 Lămâi</span><b id="sLemons">0</b></div>
-    <div class="row"><span>💗 Mângâieri</span><b id="sPets">0</b></div>
-    <div class="row"><span>🥣 Mâncare în mână</span><b id="sCarry">0</b></div>
-    <div class="row"><span>🍽️ Hrăniri</span><b id="sFed">0</b></div>
+    <div class="title">🍋 Lemon Garden</div>
+    <div class="row"><span>🍋 Lemons</span><b id="sLemons">0</b></div>
+    <div class="row"><span>💗 Pets</span><b id="sPets">0</b></div>
+    <div class="row"><span>🥣 Food in hand</span><b id="sCarry">0</b></div>
+    <div class="row"><span>🍽️ Feedings</span><b id="sFed">0</b></div>
   </div>
 
   <div class="top-right">
-    <button id="btnSound" class="round" aria-label="Sunet">🔊</button>
-    <button id="btnHelp" class="round" aria-label="Ajutor">?</button>
+    <button id="btnSound" class="round" aria-label="Sound">🔊</button>
+    <button id="btnHelp" class="round" aria-label="Help">?</button>
   </div>
 
   <div id="toast" role="status"></div>
 
-  <div id="dpad" class="dpad" aria-label="Săgeți de mișcare">
-    <button data-dir="up" class="up" aria-label="Înainte">▲</button>
-    <button data-dir="left" class="left" aria-label="Stânga">◀</button>
-    <button data-dir="right" class="right" aria-label="Dreapta">▶</button>
-    <button data-dir="down" class="down" aria-label="Înapoi">▼</button>
+  <div id="dpad" class="dpad" aria-label="Movement arrows">
+    <button data-dir="up" class="up" aria-label="Forward">▲</button>
+    <button data-dir="left" class="left" aria-label="Left">◀</button>
+    <button data-dir="right" class="right" aria-label="Right">▶</button>
+    <button data-dir="down" class="down" aria-label="Back">▼</button>
   </div>
 
-  <div id="loading">Se încarcă grădina…</div>
+  <div id="loading">Loading the garden…</div>
 
   <div id="start" class="overlay">
     <div class="card">
-      <h1>🍋 Grădina cu Lămâi</h1>
-      <p>O grădină infinită cu câini, pisici, corbi și lămâi. Mângâie-i, hrănește-i și bucură-te de primăvară!</p>
+      <h1>🍋 Lemon Garden</h1>
+      <p>An endless garden with dogs, cats, crows and lemons. Pet them, feed them and enjoy spring!</p>
       <div class="ctrl pc">
-        <h3>Pe calculator</h3>
+        <h3>On a computer</h3>
         <ul>
-          <li><b>W A S D</b> – mișcare</li>
-          <li><b>Click stânga</b> – mângâie, ia mâncare, pune mâncarea pe farfurie</li>
-          <li><b>Trage cu mouse-ul</b> – rotește camera</li>
-          <li><b>Rotița mouse-ului</b> – zoom</li>
+          <li><b>W A S D</b> – move</li>
+          <li><b>Left click</b> – pet, grab food, put food on the plate</li>
+          <li><b>Drag with the mouse</b> – rotate the camera</li>
+          <li><b>Mouse wheel</b> – zoom</li>
         </ul>
       </div>
       <div class="ctrl phone">
-        <h3>Pe telefon</h3>
+        <h3>On a phone</h3>
         <ul>
-          <li><b>Săgețile de pe ecran</b> – mișcare</li>
-          <li><b>Atinge</b> un animal, cușca cu mâncare sau farfuria</li>
-          <li><b>Trage cu degetul</b> – rotește camera</li>
+          <li><b>On-screen arrows</b> – move</li>
+          <li><b>Tap</b> an animal, the food house or the plate</li>
+          <li><b>Drag with your finger</b> – rotate the camera</li>
         </ul>
       </div>
-      <button id="btnStart" class="primary">Începe jocul</button>
+      <button id="btnStart" class="primary">Start game</button>
     </div>
   </div>
 
   <div id="unsupported" class="overlay hidden">
     <div class="card">
-      <h1>Browser nesuportat</h1>
-      <p>Jocul funcționează doar în <b>Safari</b> și <b>Chrome</b>. Deschide linkul într-unul dintre acestea.</p>
+      <h1>Unsupported browser</h1>
+      <p>The game only works in <b>Safari</b> and <b>Chrome</b>. Open the link in one of them.</p>
     </div>
   </div>
 
@@ -334,7 +334,7 @@
       setTimeout(function () {
         var l = document.getElementById('loading');
         if (!l.classList.contains('done')) {
-          l.textContent = 'Jocul nu s-a încărcat. Verifică conexiunea la internet și reîncarcă pagina.';
+          l.textContent = 'The game did not load. Check your internet connection and reload the page.';
         }
       }, 25000);
     })();
