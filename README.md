@@ -24,6 +24,7 @@ Written with Three.js and no build step, so it runs directly on GitHub Pages.
 - Collect lemons; select one and tap the screen (or press **E**) to eat it and fill the hunger bar.
 - Open the **map** (🗺, minimap or **M**), tap a spot to set a waypoint and walk there.
 - Sleep in the tent at night, sprint with stamina, watch the rain and the day/night cycle.
+- Follow the stone path from the tent past Capi's house to the river and cross it on the bridge (or wade through, slower). Capi and June sometimes go to the river to drink. Listen to the water, the frogs at night and watch the fireflies.
 
 ## Files
 

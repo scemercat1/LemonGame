@@ -615,6 +615,7 @@
   </div>
 
   <div class="top-right">
+    <button id="btnCam" class="round" aria-label="Switch to first person">🎥</button>
     <button id="btnMap" class="round" aria-label="Open map">🗺</button>
     <button id="btnRain" class="round" aria-label="Toggle rain">☂</button>
     <button id="btnSound" class="round" aria-label="Sound">🔊</button>
@@ -741,6 +742,7 @@
           <li><b>1–5</b> – select an item · <b>E</b> or click the ground – eat a lemon / place a torch</li>
           <li><b>F</b> – call Capi and June to follow you</li>
           <li><b>M</b> – map: click it to set a waypoint and walk there</li>
+          <li><b>V</b> or 🎥 – switch between third person and first person</li>
           <li>Bring <b>7 lemons</b> to the abandoned Chest Shop to renovate it and unlock torches</li>
           <li><b>Drag with the mouse</b> – rotate · <b>Wheel</b> – zoom</li>
         </ul>
@@ -753,6 +755,7 @@
           <li>With a <b>lemon</b> selected, tap the screen to eat it · with a <b>torch</b>, tap the ground to place it</li>
           <li><b>Call</b> button – Capi and June follow you</li>
           <li><b>🗺</b> or the minimap – tap the map to set a waypoint and walk there</li>
+          <li><b>🎥</b> – switch between third person and first person</li>
           <li>Bring <b>7 lemons</b> to the abandoned Chest Shop to renovate it and unlock torches</li>
           <li><b>Drag with your finger</b> – rotate the camera</li>
         </ul>
@@ -939,7 +942,8 @@
       });
 
       window.__boot.stage('downloading game code');
-      import('./game.js').catch(function (e) { window.__boot.fail(e); });
+      // Always ask for the latest game code, so updates show up without clearing the cache
+      import('./game.js?t=' + Date.now()).catch(function (e) { window.__boot.fail(e); });
 
       setTimeout(function () {
         if (!finished && !failed) window.__boot.fail(new Error('Timed out after ' + TIMEOUT_MS / 1000 + ' s'));
