@@ -939,7 +939,8 @@
       });
 
       window.__boot.stage('downloading game code');
-      import('./game.js').catch(function (e) { window.__boot.fail(e); });
+      // Always ask for the latest game code, so updates show up without clearing the cache
+      import('./game.js?t=' + Date.now()).catch(function (e) { window.__boot.fail(e); });
 
       setTimeout(function () {
         if (!finished && !failed) window.__boot.fail(new Error('Timed out after ' + TIMEOUT_MS / 1000 + ' s'));

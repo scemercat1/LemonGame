@@ -4,7 +4,8 @@
 */
 // Three.js r160 is vendored next to the game so it loads from the same site (no CDN needed).
 import * as THREE from './vendor/three.module.min.js';
-import * as MyDay from './myday.js';
+// Load myday.js with the same query as this file, so it is never older than the game
+const MyDay = await import('./myday.js' + new URL(import.meta.url).search);
 
 // Boot diagnostics live in index.html; these helpers are safe if they are missing.
 const boot = window.__boot || { stage() {}, fail(e) { console.error(e); }, done() {} };
