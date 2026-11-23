@@ -154,6 +154,8 @@ const state = {
   waypoint: null,
   eatT: 0,
   dayF: 1,
+  camMode: 'third',     // 'third' or 'first' person
+  fpPitch: 0,
 };
 const picked = new Set();
 const dirs = new Set();
@@ -2855,12 +2857,25 @@ function updatePlayer(dt) {
   player.blob.position.set(player.x, 0.01, player.z);
   const sel = selectedType();
   for (const [k, m] of Object.entries(player.hand)) m.visible = k === sel && !(k === 'lemon' && state.eatT > 0);
-  player.group.visible = !state.sleeping;
+  player.group.visible = !state.sleeping && state.camMode === 'third';
+  player.blob.visible = state.camMode === 'third';
   updateEating(dt);
   updateChunks();
 }
 
 function updateCamera(dt) {
+  if (state.camMode === 'first') {
+    // first person: eyes of the lemon, looking where it walks
+    const moving = dirs.size > 0 || !!goal;
+    const bob = moving ? Math.sin(player.walkT * 2) * 0.035 : 0;
+    const ex = player.x;
+    const ey = 0.74 + bob;
+    const ez = player.z;
+    const cp = Math.cos(state.fpPitch);
+    camera.position.set(ex, ey, ez);
+    camera.lookAt(ex - Math.sin(camYaw) * cp, ey + Math.sin(state.fpPitch), ez - Math.cos(camYaw) * cp);
+    return;
+  }
   const tx = player.x;
   const ty = 0.9;
   const tz = player.z;
@@ -3042,6 +3057,25 @@ function tryBed() {
       toast(`Day ${state.day}. You slept well. Good morning!`);
     }, 900);
   }, 1200);
+}
+
+function toggleCamera() {
+  const first = state.camMode !== 'first';
+  state.camMode = first ? 'first' : 'third';
+  if (first) {
+    state.fpPitch = 0;
+  } else {
+    // start the third person camera right behind the lemon
+    camera.position.set(
+      player.x + Math.sin(camYaw) * Math.cos(camPitch) * camDist,
+      0.9 + Math.sin(camPitch) * camDist,
+      player.z + Math.cos(camYaw) * Math.cos(camPitch) * camDist
+    );
+  }
+  $('btnCam').textContent = first ? '👁' : '🎥';
+  $('btnCam').setAttribute('aria-label', first ? 'Switch to third person' : 'Switch to first person');
+  SFX.click();
+  toast(first ? 'First person view 👁 (drag to look around)' : 'Third person view 🎥');
 }
 
 function toggleCall() {
@@ -3791,7 +3825,8 @@ function setupInput() {
     if (!drag.moved && Math.hypot(e.clientX - drag.x, e.clientY - drag.y) > 10) drag.moved = true;
     if (drag.moved) {
       camYaw -= dx * 0.008;
-      camPitch = clamp(camPitch + dy * 0.004, 0.12, 1.15);
+      if (state.camMode === 'first') state.fpPitch = clamp(state.fpPitch - dy * 0.004, -1.2, 1.2);
+      else camPitch = clamp(camPitch + dy * 0.004, 0.12, 1.15);
     }
   });
   const end = (e) => {
@@ -3803,7 +3838,7 @@ function setupInput() {
   canvas.addEventListener('pointerleave', () => { if (!drag) cursorEl.classList.remove('hot'); });
   canvas.addEventListener('wheel', (e) => {
     e.preventDefault();
-    camDist = clamp(camDist + e.deltaY * 0.006, 3.5, 13);
+    if (state.camMode === 'third') camDist = clamp(camDist + e.deltaY * 0.006, 3.5, 13);
   }, { passive: false });
   canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 
@@ -3827,6 +3862,7 @@ function setupInput() {
     if (d) selectSlot(Number(d[1]) - 1);
     if (e.code === 'KeyE') useSelected();
     if (e.code === 'KeyF') toggleCall();
+    if (e.code === 'KeyV') toggleCamera();
     if (e.code === 'KeyM') (mapView.open ? closeMap() : openMap());
     if (e.code === 'Escape' && mapView.open) closeMap();
   });
@@ -3897,6 +3933,7 @@ function setupInput() {
     $('btnSound').textContent = state.muted ? '🔇' : '🔊';
   });
   $('btnRain').addEventListener('click', () => { ensureAudio(); toggleRain(); });
+  $('btnCam').addEventListener('click', () => { ensureAudio(); toggleCamera(); });
   $('btnHelp').addEventListener('click', () => $('start').classList.remove('hidden'));
   $('btnStart').addEventListener('click', () => {
     ensureAudio();
