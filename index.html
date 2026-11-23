@@ -475,6 +475,37 @@
     }
     body.touch .build-chip { top: auto; bottom: 300px; font-size: 13px; }
 
+    /* ---------- Chest Shop window ---------- */
+    #shopOverlay { z-index: 36; }
+    .shop-card { max-width: 420px; }
+    .shop-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      background: #f6f2d8;
+      border-radius: 14px;
+      padding: 12px;
+      margin-top: 12px;
+    }
+    .shop-item.shop-col { flex-direction: column; align-items: stretch; }
+    .shop-text small { display: block; font-size: 12px; opacity: 0.8; margin-top: 3px; }
+    .shop-item .primary { width: auto; margin: 0; padding: 10px 16px; font-size: 15px; }
+    .shop-col .primary { width: 100%; }
+    .shop-pets { display: flex; gap: 8px; }
+    .shop-pets button { flex: 1; padding: 10px; font-size: 15px; border: 2px solid transparent; }
+    .shop-pets button.sel { border-color: var(--lemon); background: #fff7c2; }
+    #tagName {
+      width: 100%;
+      padding: 11px 12px;
+      font-size: 16px;
+      border: 2px solid #e2dcb8;
+      border-radius: 12px;
+      background: #fff;
+      color: var(--ink);
+    }
+    #tagName:focus { outline: none; border-color: var(--lemon); }
+
     /* ---------- sleep fade ---------- */
     #fade {
       position: fixed;
@@ -603,12 +634,12 @@
     <div class="row"><span>💗 Pets</span><b id="sPets">0</b></div>
     <div class="row"><span>🍽️ Feedings</span><b id="sFed">0</b></div>
     <div class="friend">
-      <div class="lbl"><span>🐶 Capi</span><span id="fDogLvl">Acquaintance</span></div>
+      <div class="lbl"><span>🐶 <span id="fDogName">Capi</span></span><span id="fDogLvl">Acquaintance</span></div>
       <div class="bar"><i id="fDogBar"></i></div>
       <div id="fDogHp" class="hp"></div>
     </div>
     <div class="friend">
-      <div class="lbl"><span>🐱 June</span><span id="fCatLvl">Stranger</span></div>
+      <div class="lbl"><span>🐱 <span id="fCatName">June</span></span><span id="fCatLvl">Stranger</span></div>
       <div class="bar"><i id="fCatBar"></i></div>
       <div id="fCatHp" class="hp"></div>
     </div>
@@ -653,7 +684,7 @@
         <button id="mapClear" class="secondary">Clear 📍</button>
         <button id="mapClose" class="primary">Close</button>
       </div>
-      <div class="map-legend">🏠 home · 🥣 Capi Food · 🐟 June Food · 🏚/🧰 Chest Shop · ⛺ tent · 🏥 vet · 🎾 pet park · 🍽️ plate</div>
+      <div class="map-legend">🏠 home · 🥣 Capi Food · 🐟 June Food · 🏚/🧰 Chest Shop · ⛺ tent · 🏥 vet (beyond the river) · 🌲 forest · 🎾 pet park · 🍽️ plate</div>
     </div>
   </div>
 
@@ -745,6 +776,29 @@
     </div>
   </div>
 
+  <div id="shopOverlay" class="overlay hidden">
+    <div class="card shop-card" role="dialog" aria-labelledby="shopTitle">
+      <div class="md-head">
+        <h2 id="shopTitle">🧰 Chest Shop</h2>
+        <button id="shopClose" class="md-x" type="button" aria-label="Close">✕</button>
+      </div>
+      <div class="shop-item">
+        <div class="shop-text"><b>🔥 Torches × 3</b><small>Light up the night. Free from the chest.</small></div>
+        <button id="shopTorches" class="primary" type="button">Take</button>
+      </div>
+      <div class="shop-item shop-col">
+        <div class="shop-text"><b>🏷️ Name tag</b><small>Give your pet a name of your own. Costs 🍋 × 5 (you have <span id="shopLemons">0</span>).</small></div>
+        <div class="shop-pets">
+          <button id="tagDog" class="secondary" type="button">🐶 <span id="tagDogName">Capi</span></button>
+          <button id="tagCat" class="secondary" type="button">🐱 <span id="tagCatName">June</span></button>
+        </div>
+        <input id="tagName" type="text" maxlength="14" autocomplete="off" placeholder="New name">
+        <button id="tagBuy" class="primary" type="button">Buy name tag · 🍋 5</button>
+        <p id="shopMsg" class="md-error"></p>
+      </div>
+    </div>
+  </div>
+
   <div id="fade"></div>
 
   <div id="loading">Loading the garden…</div>
@@ -763,6 +817,8 @@
           <li><b>M</b> – map: click it to set a waypoint and walk there</li>
           <li><b>V</b> or 🎥 – switch between third person and first person</li>
           <li>Bring <b>7 lemons</b> to the abandoned Chest Shop to renovate it and unlock torches</li>
+          <li>Chest Shop: torches and <b>name tags</b> (🍋 × 5) to rename your pets</li>
+          <li>Pick <b>blueberries</b> in the forests (max 6) and serve them: the next vet check-up moves one day later</li>
           <li><b>Drag with the mouse</b> – rotate · <b>Wheel</b> – zoom</li>
         </ul>
       </div>
@@ -776,6 +832,8 @@
           <li><b>🗺</b> or the minimap – tap the map to set a waypoint and walk there</li>
           <li><b>🎥</b> – switch between third person and first person</li>
           <li>Bring <b>7 lemons</b> to the abandoned Chest Shop to renovate it and unlock torches</li>
+          <li>Chest Shop: torches and <b>name tags</b> (🍋 × 5) to rename your pets</li>
+          <li>Pick <b>blueberries</b> in the forests (max 6) and serve them: the next vet check-up moves one day later</li>
           <li><b>Drag with your finger</b> – rotate the camera</li>
         </ul>
       </div>
