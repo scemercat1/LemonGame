@@ -2478,8 +2478,12 @@ if (!browserOK()) {
   $('start').classList.add('hidden');
   $('unsupported').classList.remove('hidden');
 } else {
-  init().catch((e) => {
+  const showError = (e) => {
     console.error(e);
-    $('loading').textContent = 'The game could not load. Reload the page.';
-  });
+    const msg = (e && (e.message || e.toString())) || 'unknown error';
+    $('loading').textContent = `The game could not load. Reload the page. (${String(msg).slice(0, 160)})`;
+  };
+  window.addEventListener('error', (ev) => showError(ev.error || new Error(ev.message)));
+  window.addEventListener('unhandledrejection', (ev) => showError(ev.reason));
+  init().catch(showError);
 }
