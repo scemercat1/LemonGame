@@ -7,16 +7,24 @@
 const API_KEY = 'AIzaSyCo4JYefEeciY4TgcUs5GyWm3-4g70ws3M'; // public web key
 const PROJECT_ID = 'myday-chat-f21b5';
 const AUTH_URL = `https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${API_KEY}`;
+const SIGNUP_API_URL = `https://identitytoolkit.googleapis.com/v1/accounts:signUp?key=${API_KEY}`;
 const REFRESH_URL = `https://securetoken.googleapis.com/v1/token?key=${API_KEY}`;
 const DB_URL = `https://firestore.googleapis.com/v1/projects/${PROJECT_ID}/databases/(default)/documents`;
 const STORE_KEY = 'lemonGarden.mydaySession';
 const EMAIL_DOMAIN = 'myday.app';
 
-export const SIGNUP_URL = 'https://myday.projectlemon.net/';
 export const BADGE_IDS = ['lemon_1', 'lemon_2', 'lemon_secret'];
 
 const USERNAME_RE = /^[a-z0-9_]{3,20}$/;
 const MIN_PASSWORD = 6;
+const MAX_DISPLAY_NAME = 20;
+const SIGNUP_ERRORS = {
+  EMAIL_EXISTS: 'This username is already taken.',
+  INVALID_EMAIL: 'This username is not valid.',
+  WEAK_PASSWORD: `Password: at least ${MIN_PASSWORD} characters.`,
+  OPERATION_NOT_ALLOWED: 'Creating accounts is turned off right now.',
+  TOO_MANY_ATTEMPTS_TRY_LATER: 'Too many attempts. Try again later.',
+};
 const AUTH_ERRORS = {
   EMAIL_NOT_FOUND: 'No My Day account with this username.',
   INVALID_PASSWORD: 'Wrong password.',
@@ -84,6 +92,47 @@ export function validate(username, password) {
   return '';
 }
 
+export function normalizeDisplayName(raw) {
+  return String(raw || '').trim().replace(/\s+/g, ' ');
+}
+
+export function validateDisplayName(name) {
+  if (!name) return 'Display name: required.';
+  if (name.length > MAX_DISPLAY_NAME) return `Display name: at most ${MAX_DISPLAY_NAME} characters.`;
+  return '';
+}
+
+function errorCode(body) {
+  return String((body.error && body.error.message) || '').split(/[\s:]/)[0];
+}
+
+function startSession(body, username) {
+  session = {
+    uid: body.localId,
+    username,
+    refreshToken: body.refreshToken,
+    idToken: body.idToken,
+    expiresAt: Date.now() + Number(body.expiresIn || 3600) * 1000,
+  };
+  writeStore();
+}
+
+// Creates a My Day account (Firebase Auth) and signs in with it.
+export async function signUp(rawUsername, password) {
+  const username = normalizeUsername(rawUsername);
+  const problem = validate(username, password);
+  if (problem) throw new Error(problem);
+  const res = await request(SIGNUP_API_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email: `${username}@${EMAIL_DOMAIN}`, password, returnSecureToken: true }),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(SIGNUP_ERRORS[errorCode(body)] || 'Could not create the account. Please try again.');
+  startSession(body, username);
+  return currentUser();
+}
+
 export async function signIn(rawUsername, password) {
   const username = normalizeUsername(rawUsername);
   const problem = validate(username, password);
@@ -94,18 +143,8 @@ export async function signIn(rawUsername, password) {
     body: JSON.stringify({ email: `${username}@${EMAIL_DOMAIN}`, password, returnSecureToken: true }),
   });
   const body = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    const code = String((body.error && body.error.message) || '').split(/[\s:]/)[0];
-    throw new Error(AUTH_ERRORS[code] || 'Sign in failed. Please try again.');
-  }
-  session = {
-    uid: body.localId,
-    username,
-    refreshToken: body.refreshToken,
-    idToken: body.idToken,
-    expiresAt: Date.now() + Number(body.expiresIn || 3600) * 1000,
-  };
-  writeStore();
+  if (!res.ok) throw new Error(AUTH_ERRORS[errorCode(body)] || 'Sign in failed. Please try again.');
+  startSession(body, username);
   return currentUser();
 }
 
@@ -218,4 +257,16 @@ export async function writeBadges(badges) {
   if (!Object.keys(fields).length) return;
   fields.updatedAt = { timestampValue: new Date().toISOString() };
   await writeDocument(`gameProfiles/${session.uid}`, fields);
+}
+
+// profiles/{uid}: the My Day profile; "name" is the public display name.
+export async function loadDisplayName() {
+  const fields = await readDocument(`profiles/${session.uid}`);
+  return fields && fields.name && typeof fields.name.stringValue === 'string' ? fields.name.stringValue : null;
+}
+
+// Only used right after an account is created. Writing without updateMask replaces the
+// whole document, so this must never run for an existing profile (it would drop bio/showcase).
+export async function createProfile(name) {
+  await writeDocument(`profiles/${session.uid}`, { name: { stringValue: name } });
 }

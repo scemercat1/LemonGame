@@ -3896,6 +3896,9 @@ const BADGES = [
 const AUTOSAVE_MS = 2 * 60 * 1000;
 const account = {
   user: null,
+  displayName: null,   // public My Day name from profiles/{uid}
+  mode: 'signin',      // 'signin' or 'signup' form
+  profilePending: null, // display name still to be written after a sign up
   ready: false,        // true once the cloud save was loaded (or created)
   busy: false,
   lastSaved: null,
@@ -3914,18 +3917,29 @@ function renderAccount() {
     let note = 'signed in';
     if (account.busy) note = 'syncing…';
     else if (account.lastSaved) note = `saved ${account.lastSaved.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
-    btn.textContent = `☁ ${account.user.username} · ${note}`;
+    btn.textContent = `☁ ${account.displayName || account.user.username} · ${note}`;
   } else {
     btn.textContent = '☁ Save progress with My Day';
   }
   $('mdSignedOut').classList.toggle('hidden', signedIn);
   $('mdSignedIn').classList.toggle('hidden', !signedIn);
-  if (signedIn) $('mdUser').textContent = account.user.username;
+  if (signedIn) {
+    $('mdUser').textContent = account.displayName
+      ? `${account.displayName} (@${account.user.username})`
+      : account.user.username;
+  }
+  const signup = account.mode === 'signup';
+  $('mdForm').classList.toggle('hidden', signup);
+  $('suForm').classList.toggle('hidden', !signup);
+  $('mdIntro').textContent = signup
+    ? 'Create a My Day account. It works in this game and in the My Day extension.'
+    : 'Sign in with your My Day account to save your progress, load it on any device and earn badges. Without an account the game works the same, but nothing is saved.';
+  $('suCreate').disabled = account.busy;
   $('mdStatus').textContent = account.status;
   $('mdError').textContent = account.error;
   $('mdSignIn').disabled = account.busy;
   $('mdSaveNow').disabled = account.busy || !account.ready;
-  const canRetry = !account.busy && ((signedIn && !account.ready) || (!signedIn && MyDay.hasStoredSession()));
+  const canRetry = !account.busy && ((signedIn && (!account.ready || !!account.profilePending)) || (!signedIn && MyDay.hasStoredSession()));
   $('mdRetry').classList.toggle('hidden', !canRetry);
   $('mdBadgeNote').classList.toggle('hidden', signedIn);
   renderBadges();
@@ -3991,16 +4005,24 @@ async function connectAccount() {
   account.error = '';
   account.status = 'Loading your progress…';
   renderAccount();
+  if (!account.profilePending) {
+    try {
+      account.displayName = await MyDay.loadDisplayName();
+    } catch (_) {
+      account.displayName = null; // the name is only shown in the game; not critical
+    }
+  }
+  const who = account.displayName || account.user.username;
   try {
     const save = await MyDay.loadSave();
     if (save) {
       applyGame(save);
       account.status = 'Progress loaded from My Day.';
-      toast(`Welcome back, ${account.user.username}! Progress loaded ☁`);
+      toast(`Welcome back, ${who}! Progress loaded ☁`);
     } else {
       account.lastSaved = await MyDay.writeSave(serializeGame());
       account.status = 'Your progress is now saved to My Day.';
-      toast(`Signed in as ${account.user.username}. Progress saved ☁`);
+      toast(`Signed in as ${who}. Progress saved ☁`);
     }
     account.badges = await MyDay.loadBadges();
     account.ready = true;
@@ -4061,10 +4083,73 @@ async function submitSignIn(e) {
   await connectAccount();
 }
 
+function setAccountMode(mode) {
+  account.mode = mode;
+  account.error = '';
+  account.status = '';
+  renderAccount();
+  setTimeout(() => $(mode === 'signup' ? 'suName' : 'mdUsername').focus(), 50);
+}
+
+async function submitSignUp(e) {
+  e.preventDefault();
+  if (account.busy) return;
+  const name = MyDay.normalizeDisplayName($('suName').value);
+  const username = MyDay.normalizeUsername($('suUsername').value);
+  const password = $('suPassword').value;
+  const problem = MyDay.validateDisplayName(name)
+    || MyDay.validate(username, password)
+    || (password !== $('suConfirm').value ? 'The passwords do not match.' : '');
+  if (problem) {
+    account.error = problem;
+    renderAccount();
+    return;
+  }
+  account.busy = true;
+  account.error = '';
+  account.status = 'Creating your account…';
+  renderAccount();
+  try {
+    account.user = await MyDay.signUp(username, password);
+  } catch (err) {
+    account.busy = false;
+    account.status = '';
+    account.error = err.message;
+    renderAccount();
+    return;
+  }
+  $('suPassword').value = '';
+  $('suConfirm').value = '';
+  account.mode = 'signin';
+  account.displayName = name;
+  account.profilePending = name;
+  await saveProfileName();
+  account.busy = false;
+  if (!account.user) return; // session ended while saving the profile
+  await connectAccount();
+  if (!account.profilePending) toast(`Welcome to My Day, ${name}! 🍋`);
+}
+
+// Writes profiles/{uid} for a brand-new account (only once, right after sign up).
+async function saveProfileName() {
+  if (!account.user || !account.profilePending) return;
+  try {
+    await MyDay.createProfile(account.profilePending);
+    account.profilePending = null;
+  } catch (e) {
+    account.error = `Your account was created, but the display name was not saved yet. Tap Retry. (${e.message})`;
+    if (e.expired) handleExpired();
+  }
+  renderAccount();
+}
+
 function signOutAccount() {
   MyDay.signOut();
   clearInterval(account.timer);
   account.user = null;
+  account.displayName = null;
+  account.profilePending = null;
+  account.mode = 'signin';
   account.ready = false;
   account.lastSaved = null;
   account.badges = {};
@@ -4110,10 +4195,17 @@ function setupAccount() {
   $('mydayBtn').addEventListener('click', () => { ensureAudio(); openAccount(); });
   $('mdClose').addEventListener('click', closeAccount);
   $('mdForm').addEventListener('submit', submitSignIn);
-  $('mdCreate').addEventListener('click', () => window.open(MyDay.SIGNUP_URL, '_blank', 'noopener'));
+  $('mdCreate').addEventListener('click', () => setAccountMode('signup'));
+  $('suBack').addEventListener('click', () => setAccountMode('signin'));
+  $('suForm').addEventListener('submit', submitSignUp);
   $('mdSaveNow').addEventListener('click', () => saveToCloud(false));
   $('mdSignOut').addEventListener('click', signOutAccount);
-  $('mdRetry').addEventListener('click', () => (account.user ? connectAccount() : restoreAccount()));
+  $('mdRetry').addEventListener('click', async () => {
+    if (!account.user) return restoreAccount();
+    if (account.profilePending) await saveProfileName();
+    if (!account.ready) await connectAccount();
+    return undefined;
+  });
   renderAccount();
   if (MyDay.hasStoredSession()) restoreAccount();
 }
