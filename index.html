@@ -1,0 +1,344 @@
+<!doctype html>
+<html lang="ro">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1, user-scalable=no">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="theme-color" content="#7fc8f0">
+  <meta name="description" content="Grădina cu Lămâi — o grădină 3D infinită cu câini, pisici, corbi și lămâi.">
+  <title>Grădina cu Lămâi</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Cellipse cx='50' cy='56' rx='34' ry='40' fill='%23ffd83a'/%3E%3Cpath d='M50 16 q8 -12 20 -10 q-6 11 -20 10z' fill='%233f9d2c'/%3E%3C/svg%3E">
+  <style>
+    :root {
+      --ink: #2d2a14;
+      --lemon: #ffd83a;
+      --leaf: #3f9d2c;
+      --glass: rgba(255, 253, 236, 0.9);
+      --shadow: 0 6px 22px rgba(20, 40, 10, 0.25);
+    }
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0;
+      height: 100%;
+      overflow: hidden;
+      background: #bfe6fb;
+      color: var(--ink);
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      touch-action: none;
+      -webkit-user-select: none;
+      user-select: none;
+      -webkit-tap-highlight-color: transparent;
+      overscroll-behavior: none;
+    }
+    #scene {
+      position: fixed;
+      left: 0;
+      top: 0;
+      width: 100vw;
+      height: 100vh;
+      height: 100dvh;
+      display: block;
+      outline: none;
+      touch-action: none;
+    }
+    /* Pe calculator: cursor personalizat (ascuns cel normal) */
+    body:not(.touch) #scene { cursor: none; }
+
+    #cursor {
+      position: fixed;
+      left: 0;
+      top: 0;
+      width: 30px;
+      height: 30px;
+      margin: -15px 0 0 -15px;
+      border: 3px solid var(--lemon);
+      border-radius: 50%;
+      box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.35), inset 0 0 0 2px rgba(0, 0, 0, 0.2);
+      pointer-events: none;
+      z-index: 20;
+      display: none;
+      transition: width 0.12s, height 0.12s, margin 0.12s, background 0.12s;
+    }
+    body:not(.touch) #cursor { display: block; }
+    #cursor::after {
+      content: "";
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      width: 6px;
+      height: 6px;
+      margin: -3px 0 0 -3px;
+      border-radius: 50%;
+      background: var(--lemon);
+    }
+    #cursor.hot {
+      width: 42px;
+      height: 42px;
+      margin: -21px 0 0 -21px;
+      background: rgba(255, 216, 58, 0.25);
+    }
+    #cursorLabel {
+      position: absolute;
+      left: 50%;
+      top: 36px;
+      transform: translateX(-50%);
+      white-space: nowrap;
+      font-size: 13px;
+      font-weight: 700;
+      color: #fff;
+      background: rgba(20, 30, 10, 0.72);
+      padding: 3px 9px;
+      border-radius: 999px;
+      opacity: 0;
+      transition: opacity 0.15s;
+    }
+    #cursor.hot #cursorLabel { opacity: 1; }
+
+    /* Telefon: cerc de atingere (ripple) */
+    body.touch #cursor { display: block; opacity: 0; }
+    body.touch #cursor.ripple { opacity: 1; animation: rip 0.7s ease-out forwards; }
+    body.touch #cursor.ripple #cursorLabel { opacity: 1; }
+    @keyframes rip {
+      0% { width: 22px; height: 22px; margin: -11px 0 0 -11px; opacity: 1; }
+      70% { opacity: 0.8; }
+      100% { width: 72px; height: 72px; margin: -36px 0 0 -36px; opacity: 0; }
+    }
+
+    #hud {
+      position: fixed;
+      left: 12px;
+      top: 12px;
+      background: var(--glass);
+      border-radius: 16px;
+      padding: 10px 14px;
+      box-shadow: var(--shadow);
+      min-width: 180px;
+      z-index: 10;
+    }
+    #hud .title { font-weight: 800; font-size: 15px; margin-bottom: 6px; }
+    #hud .row { display: flex; justify-content: space-between; gap: 14px; font-size: 13px; padding: 2px 0; }
+    #hud b { font-variant-numeric: tabular-nums; }
+
+    .top-right {
+      position: fixed;
+      right: 12px;
+      top: 12px;
+      display: flex;
+      gap: 8px;
+      z-index: 10;
+    }
+    .round {
+      width: 46px;
+      height: 46px;
+      border-radius: 50%;
+      border: 0;
+      background: var(--glass);
+      box-shadow: var(--shadow);
+      font-size: 20px;
+      font-weight: 800;
+      color: var(--ink);
+      cursor: pointer;
+    }
+
+    #toast {
+      position: fixed;
+      left: 50%;
+      bottom: 26px;
+      transform: translate(-50%, 10px);
+      background: var(--glass);
+      padding: 10px 16px;
+      border-radius: 14px;
+      box-shadow: var(--shadow);
+      font-weight: 700;
+      font-size: 15px;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.25s, transform 0.25s;
+      z-index: 12;
+      max-width: 88vw;
+      text-align: center;
+    }
+    #toast.show { opacity: 1; transform: translate(-50%, 0); }
+    body.touch #toast { bottom: 190px; }
+
+    /* Săgeți pe ecran: apar doar pe telefon */
+    .dpad {
+      position: fixed;
+      left: 16px;
+      bottom: 16px;
+      width: 168px;
+      height: 168px;
+      display: none;
+      grid-template-columns: 1fr 1fr 1fr;
+      grid-template-rows: 1fr 1fr 1fr;
+      gap: 4px;
+      z-index: 10;
+    }
+    body.touch .dpad { display: grid; }
+    .dpad button {
+      background: rgba(255, 253, 236, 0.8);
+      border: 0;
+      border-radius: 18px;
+      font-size: 22px;
+      color: var(--ink);
+      box-shadow: var(--shadow);
+      touch-action: none;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .dpad button:active, .dpad button.on { background: var(--lemon); }
+    .dpad .up { grid-column: 2; grid-row: 1; }
+    .dpad .left { grid-column: 1; grid-row: 2; }
+    .dpad .right { grid-column: 3; grid-row: 2; }
+    .dpad .down { grid-column: 2; grid-row: 3; }
+
+    .overlay {
+      position: fixed;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: rgba(160, 220, 255, 0.55);
+      -webkit-backdrop-filter: blur(4px);
+      backdrop-filter: blur(4px);
+      z-index: 30;
+      padding: 16px;
+    }
+    .hidden { display: none !important; }
+    .card {
+      background: #fffdf0;
+      border-radius: 22px;
+      max-width: 470px;
+      width: 100%;
+      padding: 22px 22px 20px;
+      box-shadow: 0 12px 40px rgba(0, 0, 0, 0.25);
+      max-height: 92vh;
+      overflow: auto;
+    }
+    .card h1 { margin: 0 0 8px; font-size: 26px; }
+    .card p { margin: 0 0 12px; line-height: 1.45; }
+    .ctrl { background: #f6f2d8; border-radius: 14px; padding: 10px 14px; margin: 10px 0; }
+    .ctrl h3 { margin: 0 0 6px; font-size: 15px; }
+    .ctrl ul { margin: 0; padding-left: 18px; font-size: 14px; line-height: 1.6; }
+    body.touch .ctrl.pc { display: none; }
+    body:not(.touch) .ctrl.phone { display: none; }
+    .primary {
+      width: 100%;
+      padding: 14px;
+      font-size: 18px;
+      font-weight: 800;
+      border: 0;
+      border-radius: 14px;
+      background: var(--leaf);
+      color: #fff;
+      cursor: pointer;
+      margin-top: 6px;
+    }
+    #loading {
+      position: fixed;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      padding: 20px;
+      font-weight: 800;
+      font-size: 20px;
+      background: #bfe6fb;
+      z-index: 40;
+    }
+    #loading.done { display: none; }
+  </style>
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js"
+    }
+  }
+  </script>
+</head>
+<body>
+  <canvas id="scene" aria-label="Grădina cu Lămâi"></canvas>
+  <div id="cursor"><span id="cursorLabel"></span></div>
+
+  <div id="hud">
+    <div class="title">🍋 Grădina cu Lămâi</div>
+    <div class="row"><span>🍋 Lămâi</span><b id="sLemons">0</b></div>
+    <div class="row"><span>💗 Mângâieri</span><b id="sPets">0</b></div>
+    <div class="row"><span>🥣 Mâncare în mână</span><b id="sCarry">0</b></div>
+    <div class="row"><span>🍽️ Hrăniri</span><b id="sFed">0</b></div>
+  </div>
+
+  <div class="top-right">
+    <button id="btnSound" class="round" aria-label="Sunet">🔊</button>
+    <button id="btnHelp" class="round" aria-label="Ajutor">?</button>
+  </div>
+
+  <div id="toast" role="status"></div>
+
+  <div id="dpad" class="dpad" aria-label="Săgeți de mișcare">
+    <button data-dir="up" class="up" aria-label="Înainte">▲</button>
+    <button data-dir="left" class="left" aria-label="Stânga">◀</button>
+    <button data-dir="right" class="right" aria-label="Dreapta">▶</button>
+    <button data-dir="down" class="down" aria-label="Înapoi">▼</button>
+  </div>
+
+  <div id="loading">Se încarcă grădina…</div>
+
+  <div id="start" class="overlay">
+    <div class="card">
+      <h1>🍋 Grădina cu Lămâi</h1>
+      <p>O grădină infinită cu câini, pisici, corbi și lămâi. Mângâie-i, hrănește-i și bucură-te de primăvară!</p>
+      <div class="ctrl pc">
+        <h3>Pe calculator</h3>
+        <ul>
+          <li><b>W A S D</b> – mișcare</li>
+          <li><b>Click stânga</b> – mângâie, ia mâncare, pune mâncarea pe farfurie</li>
+          <li><b>Trage cu mouse-ul</b> – rotește camera</li>
+          <li><b>Rotița mouse-ului</b> – zoom</li>
+        </ul>
+      </div>
+      <div class="ctrl phone">
+        <h3>Pe telefon</h3>
+        <ul>
+          <li><b>Săgețile de pe ecran</b> – mișcare</li>
+          <li><b>Atinge</b> un animal, cușca cu mâncare sau farfuria</li>
+          <li><b>Trage cu degetul</b> – rotește camera</li>
+        </ul>
+      </div>
+      <button id="btnStart" class="primary">Începe jocul</button>
+    </div>
+  </div>
+
+  <div id="unsupported" class="overlay hidden">
+    <div class="card">
+      <h1>Browser nesuportat</h1>
+      <p>Jocul funcționează doar în <b>Safari</b> și <b>Chrome</b>. Deschide linkul într-unul dintre acestea.</p>
+    </div>
+  </div>
+
+  <script>
+    // Verificare de browser și mesaj de rezervă — rulează chiar dacă modulul 3D nu se încarcă
+    (function () {
+      var ua = navigator.userAgent;
+      var other = /Edg|EdgA|EdgiOS|OPR|OPiOS|Opera|SamsungBrowser|FxiOS|Firefox|Focus|YaBrowser|Vivaldi|UCBrowser|DuckDuckGo/i.test(ua);
+      var chrome = /Chrome|CriOS/.test(ua) && !other;
+      var safari = /Safari/.test(ua) && !/Chrome|CriOS|Chromium|Android/.test(ua) && !other;
+      if (!(chrome || safari)) {
+        document.getElementById('start').classList.add('hidden');
+        document.getElementById('unsupported').classList.remove('hidden');
+        document.getElementById('loading').classList.add('done');
+        return;
+      }
+      setTimeout(function () {
+        var l = document.getElementById('loading');
+        if (!l.classList.contains('done')) {
+          l.textContent = 'Jocul nu s-a încărcat. Verifică conexiunea la internet și reîncarcă pagina.';
+        }
+      }, 25000);
+    })();
+  </script>
+  <script type="module" src="./game.js"></script>
+</body>
+</html>
