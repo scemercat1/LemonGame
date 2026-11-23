@@ -15,12 +15,15 @@ Written with Three.js and no build step, so it runs directly on GitHub Pages.
 - `Tap` an animal, the food house or the plate – your lemon walks over and acts
 - `Drag with your finger` – rotate the camera
 
-**Goal**
-1. Go to the doghouse and tap the food to grab a portion.
-2. Tap the plate – the dog comes over and eats.
-3. Pet the dog (it barks) and the cat (it meows and purrs).
-4. Scare off the crows that try to steal the food.
-5. Collect the lemons lying on the grass.
+**What you can do**
+- Get Capi food at **Capi Food** (or the doghouse) and June food at **June Food**; tap a plate to serve it.
+- Pet Capi (dog) and June (cat) to raise their friendship; press **F** / **Call** and friends follow you.
+- Take your pets to a **vet** every 3 days, or when they get sick (random event).
+- Bring them to a **pet park**: they play there and gain friendship.
+- Open the **Chest Shop** chest for torches; place them on the ground to light the night.
+- Collect lemons; select one and tap the screen (or press **E**) to eat it and fill the hunger bar.
+- Open the **map** (🗺, minimap or **M**), tap a spot to set a waypoint and walk there.
+- Sleep in the tent at night, sprint with stamina, watch the rain and the day/night cycle.
 
 ## Files
 
