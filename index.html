@@ -425,6 +425,55 @@
     .badge.unlocked.rarity-legendary { border-color: #f0a020; background: linear-gradient(90deg, #fff3cf, #ffe3a8); }
     .badge.unlocked .badge-tag { background: #2e7d32; color: #fff; }
 
+    /* ---------- Chest Shop renovation ---------- */
+    .renovate {
+      position: fixed;
+      left: 50%;
+      bottom: 190px;
+      transform: translateX(-50%);
+      width: min(300px, calc(100vw - 32px));
+      background: #fffdf0;
+      border-radius: 18px;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+      padding: 14px 16px 14px;
+      text-align: center;
+      z-index: 14;
+      border: 3px solid var(--lemon);
+    }
+    .renovate b { font-size: 16px; }
+    .renovate p { margin: 6px 0; font-size: 13px; }
+    .renovate .rn-cost { font-weight: 800; font-size: 15px; }
+    .renovate .primary { margin-top: 4px; padding: 11px; font-size: 17px; }
+    .rn-x {
+      position: absolute;
+      right: 8px;
+      top: 8px;
+      border: 0;
+      background: #eee8cc;
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      cursor: pointer;
+    }
+    body.touch .renovate { bottom: 300px; }
+    .build-chip {
+      position: fixed;
+      left: 50%;
+      top: 120px;
+      transform: translateX(-50%);
+      background: #ffcc00;
+      color: #111;
+      font-weight: 800;
+      font-size: 14px;
+      padding: 8px 14px;
+      border-radius: 99px;
+      box-shadow: var(--shadow);
+      z-index: 11;
+      white-space: nowrap;
+      font-variant-numeric: tabular-nums;
+    }
+    body.touch .build-chip { top: auto; bottom: 300px; font-size: 13px; }
+
     /* ---------- sleep fade ---------- */
     #fade {
       position: fixed;
@@ -579,6 +628,16 @@
 
   <div id="toast" role="status"></div>
 
+  <div id="buildChip" class="build-chip hidden" role="status"></div>
+
+  <div id="renovatePop" class="renovate hidden" role="dialog" aria-labelledby="rnTitle">
+    <button id="rnClose" class="rn-x" type="button" aria-label="Close">✕</button>
+    <b id="rnTitle">🏚 Abandoned Chest Shop</b>
+    <p>Renovate it to unlock the torch chest.</p>
+    <p class="rn-cost">Cost: 🍋 × 7 <span id="rnHave"></span></p>
+    <button id="rnGo" class="primary" type="button">Renovate</button>
+  </div>
+
   <div id="mapOverlay" class="overlay hidden">
     <div class="map-card">
       <div class="map-head">
@@ -592,7 +651,7 @@
         <button id="mapClear" class="secondary">Clear 📍</button>
         <button id="mapClose" class="primary">Close</button>
       </div>
-      <div class="map-legend">🏠 home · 🥣 Capi Food · 🐟 June Food · 🧰 Chest Shop · ⛺ tent · 🏥 vet · 🎾 pet park · 🍽️ plate</div>
+      <div class="map-legend">🏠 home · 🥣 Capi Food · 🐟 June Food · 🏚/🧰 Chest Shop · ⛺ tent · 🏥 vet · 🎾 pet park · 🍽️ plate</div>
     </div>
   </div>
 
@@ -682,6 +741,7 @@
           <li><b>1–5</b> – select an item · <b>E</b> or click the ground – eat a lemon / place a torch</li>
           <li><b>F</b> – call Capi and June to follow you</li>
           <li><b>M</b> – map: click it to set a waypoint and walk there</li>
+          <li>Bring <b>7 lemons</b> to the abandoned Chest Shop to renovate it and unlock torches</li>
           <li><b>Drag with the mouse</b> – rotate · <b>Wheel</b> – zoom</li>
         </ul>
       </div>
@@ -693,6 +753,7 @@
           <li>With a <b>lemon</b> selected, tap the screen to eat it · with a <b>torch</b>, tap the ground to place it</li>
           <li><b>Call</b> button – Capi and June follow you</li>
           <li><b>🗺</b> or the minimap – tap the map to set a waypoint and walk there</li>
+          <li>Bring <b>7 lemons</b> to the abandoned Chest Shop to renovate it and unlock torches</li>
           <li><b>Drag with your finger</b> – rotate the camera</li>
         </ul>
       </div>
