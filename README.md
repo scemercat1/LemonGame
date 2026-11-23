@@ -44,10 +44,12 @@ Sounds are generated in the browser with the Web Audio API, so there are no exte
 
 The game works without an account. Signing in with a My Day account adds cloud saves and badges.
 
-- **Save progress with My Day** (in the top-left panel) opens the sign in form: username and password of a My Day account. **Create account** opens https://myday.projectlemon.net/ in a new tab.
+- **Save progress with My Day** (in the top-left panel) opens the sign in form: username and password of a My Day account.
+- **Create account** opens a sign up form: display name (public, up to 20 characters), username (hidden, 3–20 lowercase letters, numbers or _) and password (at least 6 characters, typed twice). The account works in the game and in the My Day extension. It creates the Firebase Auth user `username@myday.app` and the profile `profiles/{uid}` with `name`; the profile is written only at sign up, never for an existing account.
 - On sign in, the save in `gameSaves/{uid}` is loaded. If there is none, the current progress is saved there.
 - Progress is saved with **Save now** and automatically every 2 minutes while signed in. The session stays after a reload until **Sign out**, which only ends the game's session.
 - Firestore documents written by the game:
+  - `profiles/{uid}`: `name` (display name), only when an account is created in the game
   - `gameSaves/{uid}`: `data` (JSON string of the game state) and `savedAt` (timestamp)
   - `gameProfiles/{uid}`: `lemon_1`, `lemon_2`, `lemon_secret` (`true` once earned, never reset) and `updatedAt`
 - Badges (earned while signed in):

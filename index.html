@@ -383,8 +383,9 @@
     .md-head h2 { margin: 0; font-size: 20px; }
     .md-x { border: 0; background: #eee8cc; width: 34px; height: 34px; border-radius: 50%; font-size: 16px; cursor: pointer; }
     .md-text { font-size: 14px; margin: 10px 0; }
-    #mdForm label { display: block; font-size: 13px; font-weight: 700; margin: 8px 0; }
-    #mdForm input {
+    #mdForm label, #suForm label { display: block; font-size: 13px; font-weight: 700; margin: 8px 0; }
+    #suForm label small { font-weight: 500; opacity: 0.7; }
+    #mdForm input, #suForm input {
       display: block;
       width: 100%;
       margin-top: 4px;
@@ -395,7 +396,7 @@
       background: #fff;
       color: var(--ink);
     }
-    #mdForm input:focus { outline: none; border-color: var(--lemon); }
+    #mdForm input:focus, #suForm input:focus { outline: none; border-color: var(--lemon); }
     .md-btns { display: flex; gap: 8px; margin-top: 10px; }
     .md-btns button { flex: 1; margin: 0; padding: 12px; font-size: 16px; }
     .md-btns button:disabled { opacity: 0.6; }
@@ -693,7 +694,7 @@
       </div>
 
       <div id="mdSignedOut">
-        <p class="md-text">Sign in with your My Day account to save your progress, load it on any device and earn badges. Without an account the game works the same, but nothing is saved.</p>
+        <p id="mdIntro" class="md-text">Sign in with your My Day account to save your progress, load it on any device and earn badges. Without an account the game works the same, but nothing is saved.</p>
         <form id="mdForm" autocomplete="on" novalidate>
           <label>Username
             <input id="mdUsername" name="username" type="text" autocomplete="username" autocapitalize="none" autocorrect="off" spellcheck="false" maxlength="20" placeholder="your_username">
@@ -704,6 +705,24 @@
           <div class="md-btns">
             <button id="mdSignIn" class="primary" type="submit">Sign in</button>
             <button id="mdCreate" class="secondary" type="button">Create account</button>
+          </div>
+        </form>
+        <form id="suForm" class="hidden" autocomplete="on" novalidate>
+          <label>Display name <small>(everyone sees it, you can change it later)</small>
+            <input id="suName" name="nickname" type="text" autocomplete="nickname" maxlength="20" placeholder="Your name">
+          </label>
+          <label>Username <small>(hidden, cannot be changed)</small>
+            <input id="suUsername" name="username" type="text" autocomplete="username" autocapitalize="none" autocorrect="off" spellcheck="false" maxlength="20" placeholder="your_username">
+          </label>
+          <label>Password
+            <input id="suPassword" name="new-password" type="password" autocomplete="new-password" placeholder="At least 6 characters">
+          </label>
+          <label>Confirm password
+            <input id="suConfirm" name="confirm-password" type="password" autocomplete="new-password" placeholder="Type it again">
+          </label>
+          <div class="md-btns">
+            <button id="suCreate" class="primary" type="submit">Create account</button>
+            <button id="suBack" class="secondary" type="button">Back to sign in</button>
           </div>
         </form>
       </div>
