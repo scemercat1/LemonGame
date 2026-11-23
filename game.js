@@ -2,8 +2,12 @@
   Lemon Garden — 3D game (Three.js), no build step, GitHub Pages compatible.
   All in-game text is in English.
 */
-// Direct URL import (no import map) so it also works on older Safari versions.
-import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+// Three.js r160 is vendored next to the game so it loads from the same site (no CDN needed).
+import * as THREE from './vendor/three.module.min.js';
+
+// Boot diagnostics live in index.html; these helpers are safe if they are missing.
+const boot = window.__boot || { stage() {}, fail(e) { console.error(e); }, done() {} };
+boot.stage('module + Three.js loaded');
 
 /* ====================================================================
    Helpers
@@ -336,7 +340,7 @@ function loadImage(src) {
   return new Promise((res, rej) => {
     const im = new Image();
     im.onload = () => res(im);
-    im.onerror = rej;
+    im.onerror = () => rej(new Error('Could not load image ' + src));
     im.src = src;
   });
 }
@@ -2439,22 +2443,29 @@ function startRenderer() {
 }
 
 async function init() {
+  boot.stage('creating WebGL renderer');
   try {
     startRenderer();
   } catch (e) {
-    $('loading').textContent = 'This device does not support 3D graphics (WebGL).';
-    console.error(e);
+    boot.fail(new Error('WebGL renderer could not be created: ' + (e && e.message)));
     return;
   }
+  boot.stage('loading textures');
   const imgs = await loadAssets();
+  boot.stage('building materials');
   buildMaterials(imgs);
   buildGeometry();
+  boot.stage('building world');
   buildWorld();
+  boot.stage('setting up input');
   setupInput();
   lastFrame = performance.now();
   renderInv();
   refreshHud();
+  boot.stage('rendering first frame');
+  renderer.render(scene, camera);
   renderer.setAnimationLoop((now) => frame(now));
+  boot.done();
   $('loading').classList.add('done');
   // hooks for testing; they do not change the game
   window.lemonDebug = {
@@ -2478,12 +2489,5 @@ if (!browserOK()) {
   $('start').classList.add('hidden');
   $('unsupported').classList.remove('hidden');
 } else {
-  const showError = (e) => {
-    console.error(e);
-    const msg = (e && (e.message || e.toString())) || 'unknown error';
-    $('loading').textContent = `The game could not load. Reload the page. (${String(msg).slice(0, 160)})`;
-  };
-  window.addEventListener('error', (ev) => showError(ev.error || new Error(ev.message)));
-  window.addEventListener('unhandledrejection', (ev) => showError(ev.reason));
-  init().catch(showError);
+  init().catch((e) => boot.fail(e));
 }

@@ -344,6 +344,51 @@
       z-index: 40;
     }
     #loading.done { display: none; }
+
+    /* ---------- boot diagnostics ---------- */
+    #diag { z-index: 50; }
+    #diag .card { max-width: 560px; }
+    #diag h1 { font-size: 22px; }
+    #diagSummary { font-weight: 700; }
+    #diagReport {
+      background: #20251a;
+      color: #e8f3d8;
+      font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      padding: 12px;
+      border-radius: 12px;
+      white-space: pre-wrap;
+      word-break: break-word;
+      max-height: 46vh;
+      overflow: auto;
+      -webkit-user-select: text;
+      user-select: text;
+    }
+    .diag-btns { display: flex; gap: 8px; margin-top: 10px; }
+    .diag-btns button { flex: 1; margin: 0; }
+    .secondary {
+      padding: 14px;
+      font-size: 18px;
+      font-weight: 800;
+      border: 0;
+      border-radius: 14px;
+      background: #e6e1c4;
+      color: var(--ink);
+      cursor: pointer;
+    }
+    #diagLive {
+      position: fixed;
+      left: 8px;
+      bottom: 8px;
+      max-width: 70vw;
+      background: rgba(0, 0, 0, 0.7);
+      color: #cfe9b0;
+      font: 11px/1.4 ui-monospace, Menlo, monospace;
+      padding: 6px 8px;
+      border-radius: 8px;
+      white-space: pre;
+      z-index: 60;
+      pointer-events: none;
+    }
   </style>
 </head>
 <body>
@@ -441,27 +486,183 @@
     </div>
   </div>
 
+  <div id="diag" class="overlay hidden">
+    <div class="card">
+      <h1>⚠️ The game could not start</h1>
+      <p id="diagSummary"></p>
+      <pre id="diagReport"></pre>
+      <div class="diag-btns">
+        <button id="diagCopy" class="primary">Copy report</button>
+        <button id="diagRetry" class="secondary">Retry</button>
+      </div>
+    </div>
+  </div>
+  <div id="diagLive" class="hidden"></div>
+
   <script>
-    // Browser check and fallback message; works even if the 3D module fails to load
+    /*
+      Boot loader with diagnostics.
+      - Loads game.js with a dynamic import() so download and parse errors are caught.
+      - Every boot step is timestamped; if a step fails or hangs, a report is shown.
+      - Add ?debug=1 to the URL to see the boot log live.
+    */
     (function () {
+      var t0 = performance.now();
+      var $ = function (id) { return document.getElementById(id); };
+      var debug = /[?&]debug(=|&|$)/.test(location.search);
+      var log = [];
+      var current = 'starting';
+      var failed = false;
+      var finished = false;
+      var TIMEOUT_MS = 45000;
+
+      function ms() { return Math.round(performance.now() - t0); }
+      function add(line) {
+        log.push('[' + ms() + ' ms] ' + line);
+        if (debug) {
+          $('diagLive').classList.remove('hidden');
+          $('diagLive').textContent = log.slice(-14).join('\n');
+        }
+      }
+
+      function webglInfo() {
+        try {
+          var c = document.createElement('canvas');
+          var gl = c.getContext('webgl2');
+          var kind = 'WebGL2';
+          if (!gl) { gl = c.getContext('webgl'); kind = gl ? 'WebGL1 only' : 'none'; }
+          if (!gl) return 'WebGL: none';
+          var renderer = gl.getParameter(gl.RENDERER);
+          var ext = gl.getExtension('WEBGL_debug_renderer_info');
+          if (ext) renderer = gl.getParameter(ext.UNMASKED_RENDERER_WEBGL);
+          return 'WebGL: ' + kind + ' | GPU: ' + renderer + ' | max texture: ' + gl.getParameter(gl.MAX_TEXTURE_SIZE);
+        } catch (e) {
+          return 'WebGL check failed: ' + (e && e.message);
+        }
+      }
+
+      function probe(url) {
+        var t = performance.now();
+        return fetch(url, { cache: 'no-store' }).then(function (r) {
+          return url + ' -> HTTP ' + r.status + ' (' + (r.headers.get('content-type') || '?') + ') in ' + Math.round(performance.now() - t) + ' ms';
+        }).catch(function (e) {
+          return url + ' -> FAILED: ' + (e && e.message);
+        });
+      }
+
+      function errText(e) {
+        if (!e) return 'unknown error';
+        var msg = (e.name ? e.name + ': ' : '') + (e.message || String(e));
+        var stack = e.stack ? String(e.stack).split('\n').slice(0, 6).join('\n') : '';
+        return stack && stack.indexOf(e.message) === -1 ? msg + '\n' + stack : (stack || msg);
+      }
+
+      function buildReport(e) {
+        var conn = navigator.connection || {};
+        return [
+          'Lemon Garden boot report',
+          'Stopped at: ' + current,
+          'Error: ' + errText(e),
+          '',
+          'Boot log:',
+          log.join('\n'),
+          '',
+          'URL: ' + location.href,
+          'User agent: ' + navigator.userAgent,
+          'Screen: ' + screen.width + 'x' + screen.height + ' @' + (window.devicePixelRatio || 1) + 'x, viewport ' + innerWidth + 'x' + innerHeight,
+          'Online: ' + navigator.onLine + (conn.effectiveType ? ' | connection: ' + conn.effectiveType : ''),
+          webglInfo(),
+          'Time: ' + new Date().toISOString(),
+        ].join('\n');
+      }
+
+      function showPanel(e) {
+        $('loading').classList.add('done');
+        $('start').classList.add('hidden');
+        $('diag').classList.remove('hidden');
+        $('diagSummary').textContent = 'Stopped at: ' + current + '. Please tap "Copy report" and send it.';
+        var text = buildReport(e);
+        $('diagReport').textContent = text + '\n\nNetwork checks: running…';
+        Promise.all([
+          probe('./game.js'),
+          probe('./vendor/three.module.min.js'),
+          probe('./assets/dog-face.jpg'),
+        ]).then(function (lines) {
+          text += '\n\nNetwork checks:\n' + lines.join('\n');
+          $('diagReport').textContent = text;
+        });
+        $('diagCopy').onclick = function () {
+          var report = $('diagReport').textContent;
+          var ok = function () { $('diagCopy').textContent = 'Copied ✓'; };
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(report).then(ok, function () { selectReport(); });
+          } else {
+            selectReport();
+          }
+        };
+        $('diagRetry').onclick = function () {
+          location.href = location.pathname + '?v=' + Date.now() + (debug ? '&debug=1' : '');
+        };
+      }
+      function selectReport() {
+        var range = document.createRange();
+        range.selectNodeContents($('diagReport'));
+        var sel = window.getSelection();
+        sel.removeAllRanges();
+        sel.addRange(range);
+        $('diagCopy').textContent = 'Selected - copy it';
+      }
+
+      window.__boot = {
+        stage: function (name) {
+          current = name;
+          add(name);
+          if (!failed) $('loading').textContent = 'Loading the garden… (' + name + ')';
+        },
+        done: function () {
+          finished = true;
+          add('ready');
+          if (debug) setTimeout(function () { $('diagLive').classList.add('hidden'); }, 6000);
+        },
+        fail: function (e) {
+          add('FAILED: ' + (e && (e.message || e)));
+          if (failed || finished) { console.error(e); return; }
+          failed = true;
+          console.error(e);
+          showPanel(e);
+        },
+      };
+
+      add('page parsed');
+
+      // Only Safari and Chrome are allowed
       var ua = navigator.userAgent;
       var other = /Edg|EdgA|EdgiOS|OPR|OPiOS|Opera|SamsungBrowser|FxiOS|Firefox|Focus|YaBrowser|Vivaldi|UCBrowser|DuckDuckGo/i.test(ua);
       var chrome = /Chrome|CriOS/.test(ua) && !other;
       var safari = /Safari/.test(ua) && !/Chrome|CriOS|Chromium|Android/.test(ua) && !other;
       if (!(chrome || safari)) {
-        document.getElementById('start').classList.add('hidden');
-        document.getElementById('unsupported').classList.remove('hidden');
-        document.getElementById('loading').classList.add('done');
+        $('start').classList.add('hidden');
+        $('unsupported').classList.remove('hidden');
+        $('loading').classList.add('done');
         return;
       }
+
+      window.addEventListener('error', function (ev) {
+        if (finished) return;
+        window.__boot.fail(ev.error || new Error(ev.message + ' @ ' + ev.filename + ':' + ev.lineno));
+      });
+      window.addEventListener('unhandledrejection', function (ev) {
+        if (finished) return;
+        window.__boot.fail(ev.reason);
+      });
+
+      window.__boot.stage('downloading game code');
+      import('./game.js').catch(function (e) { window.__boot.fail(e); });
+
       setTimeout(function () {
-        var l = document.getElementById('loading');
-        if (!l.classList.contains('done')) {
-          l.textContent = 'The game did not load. Check your internet connection and reload the page.';
-        }
-      }, 25000);
+        if (!finished && !failed) window.__boot.fail(new Error('Timed out after ' + TIMEOUT_MS / 1000 + ' s'));
+      }, TIMEOUT_MS);
     })();
   </script>
-  <script type="module" src="./game.js"></script>
 </body>
 </html>
