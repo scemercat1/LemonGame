@@ -98,7 +98,7 @@ const EAT_TIME = 1.4;
 const NAMES = { dog: 'Capi', cat: 'June' };
 const RANGE = {
   food: 2.6, shed: 2.6, juneshop: 2.6, chest: 2.3, bed: 2.0, plate: 1.9, dog: 2.1, cat: 2.1,
-  crow: 3.2, lemon: 0.9, torch: 1.6, vet: 4.6, walk: 0.3, placeTorch: 0.8, waypoint: 1.5, ruin: 3.0,
+  crow: 3.2, lemon: 0.9, torch: 1.6, vet: 4.6, walk: 0.3, placeTorch: 0.8, waypoint: 1.5, ruin: 3.0, berry: 1.4,
 };
 const LABELS = {
   food: 'Take Capi food',
@@ -111,6 +111,7 @@ const LABELS = {
   cat: 'Pet June',
   crow: 'Scare the crow',
   lemon: 'Pick up lemon',
+  berry: 'Pick blueberries',
   torch: 'Pick up torch',
   vet: 'Vet clinic',
   ruin: 'Abandoned Chest Shop',
@@ -121,11 +122,17 @@ const JUNE_SHOP_REF = { x: JUNE_SHOP.x, z: JUNE_SHOP.z };
 const CHEST_REF = { x: CHEST_SHOP.x, z: CHEST_SHOP.z };
 const BED_REF = { x: TENT.x, z: TENT.z };
 const FLOWER_COLORS = [0xffffff, 0xff8fb1, 0xffe14d, 0xc79bff, 0xff9d5c];
+const NAME_TAG_COST = 5;
+const NAME_RE = /^[\p{L}\p{N}][\p{L}\p{N} _'.-]{0,13}$/u;
+const BERRY_MAX = 6;          // at most 6 blueberries in the inventory
+const BERRIES_PER_BUSH = 2;
+const ITEM_MAX = { blueberry: BERRY_MAX };
 const ITEMS = {
   food: { icon: '🥣', name: 'Capi food' },
   catfood: { icon: '🐟', name: 'June food' },
   lemon: { icon: '🍋', name: 'Lemon' },
   torch: { icon: '🔥', name: 'Torch' },
+  blueberry: { icon: '🫐', name: 'Blueberries' },
 };
 
 /* ====================================================================
@@ -484,6 +491,9 @@ function buildMaterials(imgs) {
   mats.fallLeaf = new THREE.MeshLambertMaterial({ side: THREE.DoubleSide });
   mats.petal = new THREE.MeshLambertMaterial({ color: 0xffb8d6, side: THREE.DoubleSide });
   mats.bush = new THREE.MeshLambertMaterial();
+  mats.berryBush = new THREE.MeshLambertMaterial({ color: 0x2f6b2f });
+  mats.berry = std(0x3b4fd6, { roughness: 0.35 });
+  mats.pine = new THREE.MeshLambertMaterial({ color: 0xffffff });
   mats.ground = std(0x5aa23a, { roughness: 1 });
   mats.trunk = new THREE.MeshLambertMaterial({ color: 0x7a5230 });
   mats.foliage = new THREE.MeshLambertMaterial({ color: 0xffffff });
@@ -1306,8 +1316,22 @@ function generateRandomPois() {
     const a = rnd(0, TAU);
     return { x: Math.cos(a) * max, z: Math.sin(a) * max };
   };
-  [[38, 65], [80, 140], [160, 260], [300, 460]].forEach(([a, b], i) => {
-    const p = spot(a, b);
+  // Vets are rare: only beyond the river, and each one farther away than the last.
+  const eastSpot = (min, max) => {
+    for (let tries = 0; tries < 60; tries++) {
+      const d = rnd(min, max);
+      const z = rnd(-1, 1) * (25 + d * 0.5);
+      const p = { x: riverX(z) + RIVER_W / 2 + d, z };
+      if (riverDist(p.x, p.z) > 16 && pathDist(p.x, p.z) > 10 && taken.every((q) => Math.hypot(q.x - p.x, q.z - p.z) > 30)) {
+        taken.push(p);
+        return p;
+      }
+    }
+    const z = rnd(-20, 20);
+    return { x: riverX(z) + RIVER_W / 2 + max, z };
+  };
+  [[22, 45], [110, 160], [260, 360]].forEach(([a, b], i) => {
+    const p = eastSpot(a, b);
     vets.push(addPoi({ type: 'vet', x: p.x, z: p.z, icon: '🏥', label: `VET ${i + 1}`, clear: 12 }));
   });
   [[30, 55], [90, 170], [200, 360]].forEach(([a, b], i) => {
@@ -1349,7 +1373,7 @@ function buildChunk(cx, cz, key) {
   const oz = cz * CHUNK;
   const group = new THREE.Group();
   scene.add(group);
-  const c = { cx, cz, key, group, meshes: [], pickups: [] };
+  const c = { cx, cz, key, group, meshes: [], pickups: [], berries: [], forest: null };
   const add = (m) => { group.add(m); c.meshes.push(m); return m; };
   const col = new THREE.Color();
 
@@ -1395,6 +1419,7 @@ function buildChunk(cx, cz, key) {
   }
 
   addRiverDecor(add, r, ox, oz);
+  addForest(c, add, r, ox, oz);
 
   const leaves = add(new THREE.InstancedMesh(geo.leaf, mats.leaf, LEAVES_PER));
   for (let i = 0; i < LEAVES_PER; i++) {
@@ -1505,6 +1530,7 @@ function buildChunk(cx, cz, key) {
 
 function disposeChunk(c) {
   for (const rec of c.pickups) pickables.delete(rec.mesh);
+  for (const rec of c.berries) pickables.delete(rec.mesh);
   for (const m of c.meshes) {
     c.group.remove(m);
     if (m.isInstancedMesh) m.dispose();
@@ -1543,13 +1569,147 @@ function updatePickups(dt) {
       rec.mesh.position.y = 0.22 + Math.sin(T * 2 + rec.x) * 0.03;
       if (Math.hypot(rec.x - player.x, rec.z - player.z) < 0.75) collectLemon(rec);
     }
+    for (const rec of c.berries) {
+      if (rec.done) continue;
+      const d = Math.hypot(rec.x - player.x, rec.z - player.z);
+      if (d < 1.1) collectBerries(rec);
+      else if (d > 2.5) rec.warned = false;
+    }
   }
+}
+
+/* ---------- forests with blueberry bushes ---------- */
+const FOREST_CHANCE = 0.13;
+const BERRY_DOTS = 8;
+
+function addForest(c, add, r, ox, oz) {
+  const fx = ox + CHUNK / 2;
+  const fz = oz + CHUNK / 2;
+  if (r() >= FOREST_CHANCE || Math.hypot(fx, fz) < 30 || riverDist(fx, fz) < 14 || nearStatic(fx, fz)) return;
+  c.forest = { x: fx, z: fz };
+  const col = new THREE.Color();
+  const trees = [];
+  for (let i = 0; i < 40 && trees.length < 20; i++) {
+    const x = ox + 1 + r() * (CHUNK - 2);
+    const z = oz + 1 + r() * (CHUNK - 2);
+    if (nearStatic(x, z) || trees.some((t) => Math.hypot(t.x - x, t.z - z) < 2.3)) continue;
+    trees.push({ x, z, s: 0.9 + r() * 0.8, pine: r() < 0.7 });
+  }
+  if (trees.length) {
+    const trunks = add(new THREE.InstancedMesh(geo.trunk, mats.trunk, trees.length));
+    trees.forEach((t, i) => {
+      dummy.position.set(t.x, 0.95 * t.s, t.z);
+      dummy.rotation.set(0, 0, 0);
+      dummy.scale.set(t.s, t.s, t.s);
+      dummy.updateMatrix();
+      trunks.setMatrixAt(i, dummy.matrix);
+      obstacles.push({ x: t.x, z: t.z, r: 0.45, ck: c.key });
+    });
+    trunks.instanceMatrix.needsUpdate = true;
+    trunks.castShadow = true;
+    const pines = trees.filter((t) => t.pine);
+    if (pines.length) {
+      const cones = add(new THREE.InstancedMesh(geo.spruce, mats.pine, pines.length * 2));
+      pines.forEach((t, i) => {
+        for (let k = 0; k < 2; k++) {
+          const w = (1.25 - k * 0.35) * t.s;
+          dummy.position.set(t.x, (2.2 + k * 1.1) * t.s, t.z);
+          dummy.rotation.set(0, r() * TAU, 0);
+          dummy.scale.set(w, 0.75 * t.s, w);
+          dummy.updateMatrix();
+          cones.setMatrixAt(i * 2 + k, dummy.matrix);
+          cones.setColorAt(i * 2 + k, col.setHSL(0.36 + r() * 0.04, 0.45, 0.18 + r() * 0.08));
+        }
+      });
+      cones.instanceMatrix.needsUpdate = true;
+      if (cones.instanceColor) cones.instanceColor.needsUpdate = true;
+      cones.castShadow = true;
+    }
+    const rounds = trees.filter((t) => !t.pine);
+    if (rounds.length) {
+      const crowns = add(new THREE.InstancedMesh(geo.foliage, mats.foliage, rounds.length));
+      rounds.forEach((t, i) => {
+        dummy.position.set(t.x, 2.5 * t.s, t.z);
+        dummy.rotation.set(0, r() * TAU, 0);
+        dummy.scale.setScalar(1.3 * t.s);
+        dummy.updateMatrix();
+        crowns.setMatrixAt(i, dummy.matrix);
+        crowns.setColorAt(i, col.setHSL(0.27 + r() * 0.05, 0.5, 0.24 + r() * 0.08));
+      });
+      crowns.instanceMatrix.needsUpdate = true;
+      if (crowns.instanceColor) crowns.instanceColor.needsUpdate = true;
+      crowns.castShadow = true;
+    }
+  }
+
+  const spots = [];
+  const n = 3 + ((r() * 4) | 0);
+  for (let j = 0; j < n * 4 && spots.length < n; j++) {
+    const x = ox + 1.5 + r() * (CHUNK - 3);
+    const z = oz + 1.5 + r() * (CHUNK - 3);
+    if (nearStatic(x, z) || trees.some((t) => Math.hypot(t.x - x, t.z - z) < 1.4)) continue;
+    spots.push({ x, z });
+  }
+  if (!spots.length) return;
+  const berryMesh = add(new THREE.InstancedMesh(geo.smallSphere, mats.berry, spots.length * BERRY_DOTS));
+  spots.forEach((b, j) => {
+    const key = `${c.cx}:${c.cz}:b${j}`;
+    const done = picked.has(key);
+    const bush = add(new THREE.Mesh(geo.bush, mats.berryBush));
+    bush.position.set(b.x, 0.3, b.z);
+    bush.scale.set(0.9, 0.65, 0.9);
+    bush.castShadow = true;
+    const rec = { x: b.x, z: b.z, key, done, mesh: bush, berryMesh, from: j * BERRY_DOTS, warned: false };
+    for (let k = 0; k < BERRY_DOTS; k++) {
+      const a = r() * TAU;
+      dummy.position.set(b.x + Math.cos(a) * 0.52, 0.3 + r() * 0.35, b.z + Math.sin(a) * 0.52);
+      dummy.rotation.set(0, 0, 0);
+      dummy.scale.setScalar(done ? 0 : 0.065);
+      dummy.updateMatrix();
+      berryMesh.setMatrixAt(rec.from + k, dummy.matrix);
+    }
+    if (!done) pickable(bush, 'berry', rec);
+    c.berries.push(rec);
+  });
+  berryMesh.instanceMatrix.needsUpdate = true;
+}
+
+function collectBerries(rec) {
+  if (rec.done) return;
+  const warn = (msg) => {
+    if (!rec.warned) {
+      rec.warned = true;
+      toast(msg);
+    }
+  };
+  if (countItem('blueberry') >= BERRY_MAX) {
+    warn(`You can carry at most ${BERRY_MAX} blueberries.`);
+    return;
+  }
+  const got = addItem('blueberry', BERRIES_PER_BUSH);
+  if (!got) {
+    warn('Your inventory is full.');
+    return;
+  }
+  rec.done = true;
+  picked.add(rec.key);
+  pickables.delete(rec.mesh);
+  dummy.position.set(0, -10, 0);
+  dummy.rotation.set(0, 0, 0);
+  dummy.scale.setScalar(0);
+  dummy.updateMatrix();
+  for (let k = 0; k < BERRY_DOTS; k++) rec.berryMesh.setMatrixAt(rec.from + k, dummy.matrix);
+  rec.berryMesh.instanceMatrix.needsUpdate = true;
+  SFX.pick(spatial(rec.x, rec.z));
+  bubble(`+${got} 🫐`, rec.x, 1.2, rec.z, { size: 44, life: 1 });
+  toast(`+${got} blueberries 🫐 (${countItem('blueberry')}/${BERRY_MAX})`);
 }
 
 /* ====================================================================
    Static structures
    ==================================================================== */
 const plates = [];
+let housePoi = null;
 
 function buildHouse() {
   const g = new THREE.Group();
@@ -1582,12 +1742,12 @@ function buildHouse() {
     g.add(pickable(k, 'food', FOOD_REF));
   }
   shadowAll(g);
-  addPoi({ type: 'home', x: HOUSE.x, z: HOUSE.z, icon: '🏠', label: "Capi's house", clear: 7 });
+  housePoi = addPoi({ type: 'home', x: HOUSE.x, z: HOUSE.z, icon: '🏠', label: "Capi's house", clear: 7 });
 }
 
 function buildPlate(pos, who, rimMat, kibMat) {
-  const p = { x: pos.x, z: pos.z, who, food: false, kib: [] };
-  const label = `Serve ${NAMES[who]}'s food`;
+  const p = { x: pos.x, z: pos.z, who, food: false, foodType: null, kib: [], berries: [], poi: null };
+  const label = undefined; // the label follows the pet's current name (see labelOf)
   const g = new THREE.Group();
   g.position.set(pos.x, 0.03, pos.z);
   scene.add(g);
@@ -1608,13 +1768,26 @@ function buildPlate(pos, who, rimMat, kibMat) {
     g.add(pickable(k, 'plate', p, label));
     p.kib.push(k);
   }
+  for (let i = 0; i < 9; i++) {
+    const b = new THREE.Mesh(geo.smallSphere, mats.berry);
+    const a = rr() * TAU;
+    const d = rr() * 0.26;
+    b.scale.setScalar(0.055);
+    b.position.set(Math.cos(a) * d, 0.05, Math.sin(a) * d);
+    b.visible = false;
+    g.add(pickable(b, 'plate', p, label));
+    p.berries.push(b);
+  }
   plates.push(p);
-  addPoi({ type: 'plate', x: pos.x, z: pos.z, icon: '🍽️', label: `${NAMES[who]}'s plate`, clear: 4 });
+  p.poi = addPoi({ type: 'plate', x: pos.x, z: pos.z, icon: '🍽️', label: `${NAMES[who]}'s plate`, clear: 4 });
   return p;
 }
-function setPlateFood(p, on) {
+// type: 'normal' (pet food) or 'blueberry'
+function setPlateFood(p, on, type = 'normal') {
   p.food = on;
-  for (const k of p.kib) k.visible = on;
+  p.foodType = on ? type : null;
+  for (const k of p.kib) k.visible = on && type === 'normal';
+  for (const b of p.berries) b.visible = on && type === 'blueberry';
 }
 
 function buildShop({ pos, rot, wall, roof, sign, kind, ref, icon, label }) {
@@ -1873,7 +2046,7 @@ function startRenovation() {
   spawnWorkers(false);
   setJuneWork(true);
   SFX.chime();
-  toast('Renovation started! June and the lemon builders are on their way 🔨');
+  toast(`Renovation started! ${animals.cat.name} and the lemon builders are on their way 🔨`);
 }
 
 function finishRenovation() {
@@ -2555,6 +2728,7 @@ function updateAnimal(a, dt, t) {
       a.state = 'idle';
       a.timer = 2;
     } else if (stepTo(a, p.x, p.z, a.speed * 1.6 * slow, dt, a.kind === 'dog' ? 0.9 : 0.6)) {
+      a.eating = p.foodType;
       setPlateFood(p, false);
       a.state = 'eat';
       a.timer = 3.2;
@@ -2572,11 +2746,19 @@ function updateAnimal(a, dt, t) {
       a.timer = rnd(2, 4);
       a.happy = 1.6;
       state.fed++;
-      a.friend = Math.min(100, a.friend + 10);
+      const berries = a.eating === 'blueberry';
+      a.friend = Math.min(100, a.friend + (berries ? 5 : 10));
       if (a.kind === 'dog') SFX.bark(spatial(a.x, a.z));
       else SFX.meow(spatial(a.x, a.z));
-      bubble('Yum yum!', a.x, a.cfg.height + 0.25, a.z, { life: 1.3 });
-      toast(`${a.name} ate! Friendship up ${a.kind === 'dog' ? '🐶' : '🐱'}`);
+      bubble(berries ? 'Yum! 🫐' : 'Yum yum!', a.x, a.cfg.height + 0.25, a.z, { life: 1.3 });
+      if (berries) {
+        // blueberries move the next vet check-up one day later
+        a.lastVet = Math.min(state.day, a.lastVet + 1);
+        a.dueNotified = false;
+        toast(`${a.name} ate blueberries! 🫐 Next vet check-up: day ${a.lastVet + VET_EVERY_DAYS}.`);
+      } else {
+        toast(`${a.name} ate! Friendship up ${a.kind === 'dog' ? '🐶' : '🐱'}`);
+      }
       if (a.plate && a.plate.food) a.state = 'plate';
     }
   } else if (a.state === 'play') {
@@ -2709,12 +2891,12 @@ function petAnimal(a) {
   if (a.kind === 'dog') {
     SFX.bark(spatial(a.x, a.z));
     bubble('Woof! Woof!', a.x, a.cfg.height + 0.4, a.z, { life: 1.2 });
-    toast('Capi barked happily! 🐶');
+    toast(`${a.name} barked happily! 🐶`);
   } else {
     SFX.meow(spatial(a.x, a.z));
     SFX.purr(spatial(a.x, a.z));
     bubble('Purr…', a.x, a.cfg.height + 0.3, a.z, { life: 1.2 });
-    toast('June is purring 🐱');
+    toast(`${a.name} is purring 🐱`);
   }
 }
 
@@ -2888,7 +3070,7 @@ function updateCrow(c, dt, t) {
         c.plateBound = null;
         if (p && p.food && pd >= 4 && Math.hypot(c.x - p.x, c.z - p.z) < 1.4) {
           setPlateFood(p, false);
-          toast(`A crow stole ${NAMES[p.who]}'s food!`);
+          toast(`A crow stole ${petName(p.who)}'s food!`);
           takeoff(c, true);
         } else {
           c.idle = rnd(1, 3.5);
@@ -3322,6 +3504,8 @@ function updateCamera(dt) {
    Inventory (5 slots) and actions
    ==================================================================== */
 function addItem(type, n = 1) {
+  if (ITEM_MAX[type] !== undefined) n = Math.min(n, Math.max(0, ITEM_MAX[type] - countItem(type)));
+  if (n <= 0) return 0;
   let left = n;
   for (const s of state.inv) {
     if (s && s.type === type && s.n < MAX_STACK) {
@@ -3382,9 +3566,11 @@ function useSelected() {
     const c = Math.cos(player.yaw);
     placeTorch(player.x + s * 1.2, player.z + c * 1.2);
   } else if (t === 'food') {
-    toast("Tap Capi's plate to serve the food.");
+    toast(`Tap ${animals.dog.name}'s plate to serve the food.`);
+  } else if (t === 'blueberry') {
+    toast('Put blueberries on a plate: the next vet check-up moves one day later.');
   } else {
-    toast("Tap June's plate to serve the food.");
+    toast(`Tap ${animals.cat.name}'s plate to serve the food.`);
   }
 }
 
@@ -3420,25 +3606,34 @@ function placeFood(p) {
     toast('The plate is already full.');
     return;
   }
+  // Pet food or blueberries: the selected slot wins, then pet food, then blueberries.
   const type = p.who === 'dog' ? 'food' : 'catfood';
-  let idx = selectedType() === type ? state.sel : -1;
-  if (idx < 0) idx = state.inv.findIndex((s) => s && s.type === type);
+  const sel = selectedType();
+  let item = sel === type || sel === 'blueberry' ? sel : null;
+  let idx = item ? state.sel : state.inv.findIndex((s) => s && s.type === type);
+  if (idx >= 0 && !item) item = type;
+  if (idx < 0) {
+    idx = state.inv.findIndex((s) => s && s.type === 'blueberry');
+    if (idx >= 0) item = 'blueberry';
+  }
   if (idx < 0) {
     toast(p.who === 'dog'
-      ? 'You have no Capi food. Get some at Capi Food or the doghouse.'
-      : 'You have no June food. Get some at June Food.');
+      ? 'You have no Capi food or blueberries. Get food at Capi Food or the doghouse.'
+      : 'You have no June food or blueberries. Get food at June Food.');
     return;
   }
   removeOne(idx);
-  setPlateFood(p, true);
+  const berries = item === 'blueberry';
+  setPlateFood(p, true, berries ? 'blueberry' : 'normal');
   SFX.place(spatial(p.x, p.z));
   const a = p.who === 'dog' ? animals.dog : animals.cat;
+  const what = berries ? 'Blueberries' : 'Food';
   if (a.state === 'work') {
     a.plate = p;
-    toast(`Food on the plate. ${a.name} will eat after the renovation.`);
+    toast(`${what} on the plate. ${a.name} will eat after the renovation.`);
     return;
   }
-  toast(`Food on the plate. ${a.name} is coming!`);
+  toast(`${what} on the plate. ${a.name} is coming!`);
   if (a.state !== 'eat') {
     a.state = 'plate';
     a.plate = p;
@@ -3520,14 +3715,67 @@ function toggleCall() {
   SFX.click();
 }
 
+/* ---------- Chest Shop window: torches and name tags ---------- */
+let shopPet = 'dog';
+
+function openShop() {
+  $('shopMsg').textContent = '';
+  $('tagName').value = '';
+  renderShop();
+  $('shopOverlay').classList.remove('hidden');
+}
+function closeShop() {
+  $('shopOverlay').classList.add('hidden');
+}
+function renderShop() {
+  $('shopLemons').textContent = countItem('lemon');
+  $('tagDogName').textContent = animals.dog.name;
+  $('tagCatName').textContent = animals.cat.name;
+  $('tagDog').classList.toggle('sel', shopPet === 'dog');
+  $('tagCat').classList.toggle('sel', shopPet === 'cat');
+}
+
+// Keeps every place that shows a pet's name in sync after a rename.
+function updatePetLabels() {
+  for (const p of plates) if (p.poi) p.poi.label = `${petName(p.who)}'s plate`;
+  if (housePoi) housePoi.label = `${animals.dog.name}'s house`;
+}
+
+function buyNameTag() {
+  const name = String($('tagName').value || '').trim().replace(/\s+/g, ' ');
+  const msg = $('shopMsg');
+  if (!NAME_RE.test(name)) {
+    msg.textContent = 'Name: 1–14 letters or numbers (spaces, _ - . and \' are ok).';
+    return;
+  }
+  const have = countItem('lemon');
+  if (have < NAME_TAG_COST) {
+    msg.textContent = `A name tag costs ${NAME_TAG_COST} lemons. You have ${have}.`;
+    return;
+  }
+  const a = animals[shopPet];
+  const old = a.name;
+  takeItems('lemon', NAME_TAG_COST);
+  a.name = name;
+  updatePetLabels();
+  renderShop();
+  refreshHud();
+  msg.textContent = '';
+  $('tagName').value = '';
+  SFX.chime();
+  bubble(`🏷️ ${name}`, a.x, a.cfg.height + 0.4, a.z, { life: 2 });
+  toast(`${old} is now called ${name}! 🏷️`);
+}
+
 function executeGoal(g) {
   switch (g.kind) {
     case 'food': grabFood(); break;
     case 'shed': takeFromShed(); break;
     case 'juneshop': takeFromJuneShop(); break;
     case 'chest':
-      if (chestShop.status === 'open') openChest();
+      if (chestShop.status === 'open') openShop();
       break;
+    case 'berry': collectBerries(g.ref); break;
     case 'ruin':
       if (countItem('lemon') >= RENOVATE_COST) {
         chestShop.dismissed = false;
@@ -3676,6 +3924,22 @@ function drawMap(cv, range, big) {
     g.stroke();
   }
 
+  // forests around you
+  for (const c of chunks.values()) {
+    if (!c.forest) continue;
+    const [x, y] = toS(c.forest.x, c.forest.z);
+    g.beginPath();
+    g.arc(x, y, Math.max(4, CHUNK * 0.45 * s), 0, TAU);
+    g.fillStyle = 'rgba(20, 70, 25, 0.55)';
+    g.fill();
+    if (big) {
+      g.font = '16px system-ui, sans-serif';
+      g.textAlign = 'center';
+      g.textBaseline = 'middle';
+      g.fillText('🌲', x, y);
+    }
+  }
+
   // torches
   g.fillStyle = '#ffb347';
   for (const t of torches) {
@@ -3790,10 +4054,11 @@ function serializeGame() {
     inv: state.inv.map((s) => (s ? { type: s.type, n: s.n } : null)),
     sel: state.sel,
     player: { x: r2(player.x), z: r2(player.z), yaw: r2(player.yaw) },
-    animals: animalList.map((a) => ({ kind: a.kind, x: r2(a.x), z: r2(a.z), friend: r2(a.friend), lastVet: a.lastVet, sick: a.sick })),
+    animals: animalList.map((a) => ({ kind: a.kind, name: a.name, x: r2(a.x), z: r2(a.z), friend: r2(a.friend), lastVet: a.lastVet, sick: a.sick })),
     torches: torches.map((t) => [r2(t.x), r2(t.z)]),
     picked: [...picked].slice(-3000),
     vets: vets.map((v) => [r2(v.x), r2(v.z)]),
+    vetsV: 2, // vets beyond the river
     parks: parks.map((p) => [r2(p.x), r2(p.z)]),
     chestShop: { status: chestShop.status, left: Math.round(chestShop.left * 10) / 10 },
   };
@@ -3832,7 +4097,7 @@ function applyGame(d) {
       if (list[i] && Array.isArray(p)) movePoi(list[i], num(p[0], list[i].x), num(p[1], list[i].z));
     });
   };
-  place(vets, d.vets);
+  if (d.vetsV === 2) place(vets, d.vets); // older saves keep the new vets beyond the river
   place(parks, d.parks);
 
   for (const s of Array.isArray(d.animals) ? d.animals : []) {
@@ -3843,6 +4108,7 @@ function applyGame(d) {
     a.friend = clamp(num(s.friend, a.friend), 0, 100);
     a.lastVet = Math.max(1, Math.floor(num(s.lastVet, 1)));
     a.sick = !!s.sick;
+    if (typeof s.name === 'string' && NAME_RE.test(s.name)) a.name = s.name;
     a.dueNotified = false;
     a.state = 'idle';
     a.timer = 1;
@@ -3852,6 +4118,7 @@ function applyGame(d) {
     a.home = { x: a.x, z: a.z, r: 3 };
   }
   for (const p of plates) setPlateFood(p, false);
+  updatePetLabels();
 
   while (torches.length) removeTorch(torches[0]);
   for (const t of Array.isArray(d.torches) ? d.torches : []) {
@@ -4245,6 +4512,7 @@ function refreshHud() {
     el.style.filter = f < 0.5 ? 'grayscale(1)' : 'none';
   });
   for (const [k, a] of [['Dog', animals.dog], ['Cat', animals.cat]]) {
+    $(`f${k}Name`).textContent = a.name;
     $(`f${k}Lvl`).textContent = friendLabel(a.friend);
     $(`f${k}Bar`).style.width = `${a.friend}%`;
     const hp = $(`f${k}Hp`);
@@ -4297,7 +4565,13 @@ function groundAt(x, y) {
 
 const cursorEl = $('cursor');
 const cursorLabel = $('cursorLabel');
+function petName(kind) {
+  return (animals[kind] && animals[kind].name) || NAMES[kind];
+}
 function labelOf(pk) {
+  if (pk.kind === 'plate') return `Serve ${petName(pk.ref.who)}'s food`;
+  if (pk.kind === 'dog' || pk.kind === 'cat') return `Pet ${petName(pk.kind)}`;
+  if (pk.kind === 'chest') return 'Chest Shop';
   return pk.label || LABELS[pk.kind] || '';
 }
 function placeCursor(x, y) {
@@ -4390,6 +4664,10 @@ function setupInput() {
   const keyMap = { KeyW: 'up', ArrowUp: 'up', KeyS: 'down', ArrowDown: 'down', KeyA: 'left', ArrowLeft: 'left', KeyD: 'right', ArrowRight: 'right' };
   const typing = (e) => e.target && /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName);
   window.addEventListener('keydown', (e) => {
+    if (e.code === 'Escape' && !$('shopOverlay').classList.contains('hidden')) {
+      closeShop();
+      return;
+    }
     if (e.code === 'Escape' && !$('mydayOverlay').classList.contains('hidden')) {
       closeAccount();
       return;
@@ -4468,6 +4746,12 @@ function setupInput() {
   });
   $('wpBtn').addEventListener('click', goToWaypoint);
   $('rnGo').addEventListener('click', () => { ensureAudio(); startRenovation(); });
+  $('shopClose').addEventListener('click', closeShop);
+  $('shopTorches').addEventListener('click', () => { openChest(); renderShop(); });
+  $('tagDog').addEventListener('click', () => { shopPet = 'dog'; renderShop(); });
+  $('tagCat').addEventListener('click', () => { shopPet = 'cat'; renderShop(); });
+  $('tagBuy').addEventListener('click', buyNameTag);
+  $('tagName').addEventListener('keydown', (e) => { if (e.key === 'Enter') buyNameTag(); });
   $('rnClose').addEventListener('click', () => { chestShop.dismissed = true; hideRenovatePopup(); });
 
   $('callBtn').addEventListener('click', () => { ensureAudio(); toggleCall(); });
