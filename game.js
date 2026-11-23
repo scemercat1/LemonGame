@@ -2,7 +2,8 @@
   Lemon Garden — 3D game (Three.js), no build step, GitHub Pages compatible.
   All in-game text is in English.
 */
-import * as THREE from 'three';
+// Direct URL import (no import map) so it also works on older Safari versions.
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
 
 /* ====================================================================
    Helpers
