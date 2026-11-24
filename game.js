@@ -99,7 +99,7 @@ const NAMES = { dog: 'Capi', cat: 'June' };
 const RANGE = {
   stand: 2.4, market: 2.6, decor: 1.6,
   food: 2.6, shed: 2.6, juneshop: 2.6, chest: 2.3, bed: 2.0, plate: 1.9, dog: 2.1, cat: 2.1,
-  cablebase: 2.6, cableport: 2.6, generator: 2.4, portcrate: 2.0, tickets: 2.6,
+  cablebase: 2.6, cableport: 2.6, generator: 2.4, portcrate: 2.0, tickets: 2.6, boats: 1.2,
   crow: 3.2, lemon: 0.9, torch: 1.6, vet: 4.6, walk: 0.3, placeTorch: 0.8, waypoint: 1.5, ruin: 3.0, berry: 1.4,
 };
 const LABELS = {
@@ -124,6 +124,7 @@ const LABELS = {
   generator: 'Generator',
   portcrate: 'Fish crate',
   tickets: 'Cable car tickets',
+  boats: 'Fishing boats',
 };
 const FOOD_REF = { x: HOUSE.x, z: HOUSE.z };
 const SHED_REF = { x: SHED.x, z: SHED.z };
@@ -2926,6 +2927,7 @@ function updateTorches(dt) {
     const c = Math.cos(player.yaw);
     lightSources.push({ x: player.x + s * 0.2 + c * 0.3, y: 1.0, z: player.z + c * 0.2 - s * 0.3, f: hf, d: 0 });
   }
+  addCableLights(lightSources);
   lightSources.sort((a, b) => a.d - b.d);
   const base = lerp(14, 3, state.dayF);
   for (let i = 0; i < TORCH_LIGHTS; i++) {
@@ -2933,6 +2935,7 @@ function updateTorches(dt) {
     const src = lightSources[i];
     if (src && src.d < 45) {
       l.position.set(src.x, src.y, src.z);
+      l.color.setHex(src.c || 0xff9a3c);
       l.intensity = base * src.f;
     } else {
       l.intensity = 0;
@@ -4314,6 +4317,7 @@ function executeGoal(g) {
       else toast('The South Port station is still being built.');
       break;
     case 'tickets': openTickets(); break;
+    case 'boats': openBoats(); break;
     case 'generator':
       if (cableBase.status !== 'open') toast(`Build the cable car base first (${CABLE_COST} 🪙).`);
       else if (!cable.gen) openCable('base');
@@ -6263,7 +6267,7 @@ function setupInput() {
       closeShop();
       return;
     }
-    const openPanel = ['standOverlay', 'marketOverlay', 'missionsOverlay', 'cableOverlay', 'ticketOverlay'].find((id) => $(id) && !$(id).classList.contains('hidden'));
+    const openPanel = ['standOverlay', 'marketOverlay', 'missionsOverlay', 'cableOverlay', 'ticketOverlay', 'boatOverlay'].find((id) => $(id) && !$(id).classList.contains('hidden'));
     if (e.code === 'Escape' && openPanel) {
       $(openPanel).classList.add('hidden');
       return;
@@ -6358,6 +6362,7 @@ function setupInput() {
   onClick('cbSouth', () => { ensureAudio(); buySouthLine(); });
   onClick('cbRide', () => { ensureAudio(); requestRide(); });
   buildTicketPanel();
+  buildBoatPanel();
   $('makeNormal').addEventListener('click', () => makeLemonade(false));
   $('makePremium').addEventListener('click', () => makeLemonade(true));
   $('mkClose').addEventListener('click', () => $('marketOverlay').classList.add('hidden'));
@@ -6459,8 +6464,17 @@ const CABLE_WHEEL = 4;     // the bullwheel sits this far behind the station cen
 const CABLE_MOUTH = 13;    // where the rope leaves the station, measured from the bullwheel
 const ROUTE_TIME = 90;     // seconds to build the South Port line
 const PORT_RANGE = 30;     // the port only works while you are this close
-const PORT_FISH_EVERY = 60;
+const PORT_FISH_EVERY = 60;   // seconds per fish at level 1
 const PORT_CRATE_MAX = 12;
+const FISH_UPGRADES = [
+  null,
+  null,
+  { name: 'Bigger nets', text: '2 fish a minute', cost: 8 },
+  { name: 'A second boat crew', text: '3 fish a minute', cost: 15 },
+];
+const fishEvery = () => PORT_FISH_EVERY / cable.fishLevel;
+const crateMax = () => PORT_CRATE_MAX + 6 * (cable.fishLevel - 1);
+const BOAT_REF = { x: 0, z: 0 };
 const CABLE_FARE = 3;       // one-way ticket
 const LINE_COST = 10;       // renovating the South Port line
 
@@ -6632,6 +6646,11 @@ const cable = {
   gold: 0,
   portT: 0,
   tickets: 0,
+  fishLevel: 1,
+  fault: null,         // { key, name, x, z, cost, time, status: 'broken' | 'repairing', left }
+  nextFault: 0,        // game day (with fraction) of the next breakdown
+  repairSite: null,
+  glows: [],
   oldLine: null,
   cabins: [],
   routeParts: [],
@@ -6661,6 +6680,13 @@ const SOUTH_STAGES = [
 const routeProgress = () => (cable.south === 'open' ? 1 : cable.south === 'building' ? clamp(1 - cable.southLeft / ROUTE_TIME, 0, 1) : 0);
 
 /* ---------- pieces ---------- */
+function glow(parent, mat, size, x = 0, y = 0, z = 0) {
+  const sp = new THREE.Sprite(mat);
+  sp.scale.setScalar(size);
+  sp.position.set(x, y, z);
+  parent.add(sp);
+  return sp;
+}
 function cbox(parent, w, h, d, m, x, y, z) {
   const mm = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), m);
   mm.position.set(x, y, z);
@@ -6702,6 +6728,10 @@ function buildCableMaterials() {
   mats.hullStripe = std(0x1f5f9e, { roughness: 0.6 });
   mats.net = std(0x6d8a7a, { roughness: 1, transparent: true, opacity: 0.8 });
   mats.ribbon = std(0xff6a00, { roughness: 0.8 });
+  mats.beacon = new THREE.MeshBasicMaterial({ color: 0xff2a2a });
+  mats.glowWhite = new THREE.SpriteMaterial({ map: radialCanvasTexture('rgba(255,244,214,0.95)', 'rgba(255,244,214,0)'), transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, opacity: 0 });
+  mats.glowRed = new THREE.SpriteMaterial({ map: radialCanvasTexture('rgba(255,60,50,0.95)', 'rgba(255,60,50,0)'), transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, opacity: 0 });
+  mats.glowAmber = new THREE.SpriteMaterial({ map: radialCanvasTexture('rgba(255,170,40,0.95)', 'rgba(255,170,40,0)'), transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, opacity: 0 });
   mats.rust = std(0x7b4a2c, { roughness: 0.9, metalness: 0.3 });
   mats.rustDark = std(0x4a3426, { roughness: 0.85, metalness: 0.4 });
   mats.rustCabin = std(0x7e3a2a, { roughness: 0.9, metalness: 0.2 });
@@ -6755,7 +6785,12 @@ function buildStation(g, title, part) {
   P(signMesh(g, title, 5.2, 1.3, 0, 5.15, 9.55), 0.8);
   P(signMesh(g, title, 5.2, 1.3, 0, 4.6, -8.9, Math.PI), 0.8);
   // lights under the roof
-  for (const z of [-5, 0, 5]) for (const x of [-4.2, 4.2]) P(cbox(g, 0.8, 0.06, 0.25, mats.cabinLight, x, 6.2, z), 0.88);
+  for (const z of [-5, 0, 5]) for (const x of [-4.2, 4.2]) glow(P(cbox(g, 0.8, 0.06, 0.25, mats.cabinLight, x, 6.2, z), 0.88), mats.glowWhite, 2.2, 0, -0.15, 0);
+  // floodlights on the front corners, over the platforms
+  for (const x of [-4.9, 4.9]) {
+    const fl = P(cbox(g, 0.5, 0.25, 0.35, mats.darkMetal, x, 5.75, 9.6), 0.88);
+    glow(cbox(fl, 0.42, 0.05, 0.28, mats.cabinLight, 0, -0.14, 0), mats.glowWhite, 2.6, 0, -0.1, 0.1);
+  }
   // boarding gates
   for (const x of [-4.35, 4.35]) {
     P(cyl(g, 0.05, 0.05, 1.0, mats.steel, x - 0.55, 0.6, 0.5, 8), 0.9);
@@ -6797,7 +6832,7 @@ function laneObstacles(st) {
   return list;
 }
 
-function buildTower(t) {
+function buildTower(t, lit = true) {
   const g = new THREE.Group();
   g.position.set(t.x, 0, t.z);
   g.rotation.y = cableLine.rot;
@@ -6831,6 +6866,17 @@ function buildTower(t) {
   for (const x of [-0.2, 0.2]) cbox(g, 0.04, H - 1.6, 0.04, mats.darkMetal, x, (H - 1.0) / 2 + 0.3, -0.62);
   for (let y = 0.9; y < H - 1.1; y += 0.6) cbox(g, 0.4, 0.03, 0.03, mats.darkMetal, 0, y, -0.62);
   signMesh(g, `${t.i + 1}`, 0.5, 0.5, 0, 2.6, 0.5, 0, ['#ffffff', '#111111', '#111111']);
+  if (lit) {
+    // red warning beacons on both ends of the cross arm, and a lamp over the platform
+    for (const x of [-(R + 0.7), R + 0.7]) {
+      cyl(g, 0.03, 0.03, 0.45, mats.darkMetal, x, H - 0.3, 0, 6);
+      const b = new THREE.Mesh(new THREE.SphereGeometry(0.1, 10, 8), mats.beacon);
+      b.position.set(x, H - 0.03, 0);
+      g.add(b);
+      glow(b, mats.glowRed, 1.8);
+    }
+    glow(cbox(g, 0.3, 0.08, 0.2, mats.cabinLight, 0, H - 1.15, 0.5), mats.glowAmber, 1.6);
+  }
   shadowAll(g);
   return g;
 }
@@ -6874,7 +6920,7 @@ function buildCabin(num) {
   cbox(body, 0.06, 1.2, 0.05, mats.darkMetal, 0, -half + 1.22, 0.93);        // door seam
   cbox(body, 1.96, 0.26, 1.96, mats.cabinPaint, 0, half - 0.15, 0);          // roof
   cbox(body, 1.2, 0.12, 1.2, mats.stationRoof, 0, half + 0.03, 0);
-  cbox(body, 0.9, 0.03, 0.4, mats.cabinLight, 0, half - 0.3, 0);             // ceiling light
+  glow(cbox(body, 0.9, 0.03, 0.4, mats.cabinLight, 0, half - 0.3, 0), mats.glowWhite, 1.5, 0, -0.1, 0); // ceiling light
   for (const x of [-0.62, 0.62]) cbox(body, 0.5, 0.42, 1.6, mats.darkMetal, x, -half + 0.45, 0); // benches
   for (const ry of [0, Math.PI]) signMesh(body, `${num}`, 0.42, 0.3, 0, -half + 0.35, ry ? -0.96 : 0.96, ry, ['#ffffff', '#c8332b', '#c8332b']);
   shadowAll(g);
@@ -6971,6 +7017,8 @@ function buildSouthPort() {
   cbox(g, 3.5, 0.12, 2.0, mats.wood, toWater - 1.75, 0.34, -2.5);
   for (const x of [-0.6, -1.8, -3.0]) for (const z of [-3.4, -1.6]) cyl(g, 0.11, 0.11, 0.9, mats.darkWood, toWater + x, 0, z, 8);
   portBoats = [buildBoat(g, toWater - 2.6, -6.0, 0.0, 4.6), buildBoat(g, toWater - 2.6, 1.6, Math.PI, 3.8)];
+  Object.assign(BOAT_REF, stationPoint(PORT_ST, toWater + 1.3, -2.5));
+  for (const b of portBoats) b.traverse((o) => { if (o.isMesh) pickable(o, 'boats', BOAT_REF, 'Fishing boats'); });
   // harbour office, behind the station
   cbox(g, 2.6, 2.6, 3.4, mats.marketWall, -9.2, 1.3, -12);
   cbox(g, 3.0, 0.25, 3.8, mats.hullStripe, -9.2, 2.72, -12);
@@ -7238,7 +7286,7 @@ function buildOldLine() {
   scene.add(old);
   const lane = (d, side = 1) => ({ x: L.A.x + L.n.x * CABLE_GAUGE * side + L.u.x * d, z: L.A.z + L.n.z * CABLE_GAUGE * side + L.u.z * d });
   L.towers.forEach((t) => {
-    const tw = buildTower(t);
+    const tw = buildTower(t, false);
     rustify(tw);
     if (t.i < 2) {
       old.add(tw);
@@ -7408,7 +7456,7 @@ function closeCable() {
   cbEl('cableOverlay').classList.add('hidden');
 }
 function cableRunning() {
-  return cable.south === 'open' && cable.gen && cable.genOn;
+  return cable.south === 'open' && cable.gen && cable.genOn && !cable.fault;
 }
 const noEl = { textContent: '', disabled: false, classList: { add() {}, remove() {}, contains: () => true } };
 function cbEl(id) {
@@ -7421,9 +7469,11 @@ function renderCable() {
   if (cable.south !== 'open') status = 'No line is running yet.';
   else if (!cable.gen) status = 'The line is ready, but it needs a generator to run.';
   else if (!cable.genOn) status = 'Stopped: the generator is off.';
+  else if (cable.fault) status = `⚠ Stopped: ${cable.fault.name}.`;
   else status = `Running · ${CABLE_CABINS} cabins · about ${Math.round(cableLine.len)} m to South Port.`;
   if (cable.south === 'open') status += ` 🎟 Tickets: ${cable.tickets}${cable.tickets ? '' : ' (buy them at the ticket shop near home)'}`;
   cbEl('cbStatus').textContent = status;
+  renderRepairRow();
   cbEl('cbCoins').textContent = state.coins;
   const gen = cbEl('cbGen');
   if (!cable.gen) {
@@ -7501,6 +7551,7 @@ function buySouthLine() {
 }
 function finishSouthLine() {
   cable.south = 'open';
+  cable.nextFault = dayNow() + 5;
   cable.southLeft = 0;
   placeCabins();
   applyCableVisuals();
@@ -7510,13 +7561,251 @@ function finishSouthLine() {
 }
 
 function stationTap(at) {
-  if (cableRunning() && cable.tickets > 0) {
+  if (cableRunning() && cable.tickets > 0 && !cable.fault) {
     cable.overlayAt = at;
     toast(`🎟 ${cable.tickets} ${cable.tickets === 1 ? 'ticket' : 'tickets'}: going to the platform…`);
     requestRide();
   } else {
     openCable(at);
   }
+}
+
+/* ---------- breakdowns: every 5 days something breaks, June and her crew fix it ---------- */
+function dayNow() {
+  return state.day + state.tod / 24;
+}
+function pickFault() {
+  const L = cableLine;
+  const opts = [];
+  const tw = L.towers[Math.floor(Math.random() * L.towers.length)];
+  const side = { x: tw.x - L.n.x * 3.2, z: tw.z - L.n.z * 3.2 };
+  opts.push({ key: 'tower', name: `Tower ${tw.i + 1}: worn sheave wheels`, ...side });
+  opts.push({ key: 'generator', name: 'Generator: broken fuel pump', x: GEN_POS.x + L.u.x * 2.5, z: GEN_POS.z + L.u.z * 2.5 });
+  opts.push({ key: 'basewheel', name: 'Base station: bullwheel bearing', ...stationPoint(BASE_ST, 0, -11.5) });
+  opts.push({ key: 'portwheel', name: 'South Port station: bullwheel bearing', ...stationPoint(PORT_ST, 0, -11.5) });
+  const k = Math.floor(Math.random() * (L.towers.length - 1));
+  const a = L.towers[k];
+  const b = L.towers[k + 1];
+  opts.push({ key: 'rope', name: `Haul rope: frayed strand between towers ${k + 1} and ${k + 2}`, x: (a.x + b.x) / 2 - L.n.x * 4, z: (a.z + b.z) / 2 - L.n.z * 4 });
+  const cab = 1 + Math.floor(Math.random() * CABLE_CABINS);
+  opts.push({ key: 'cabin', name: `Cabin ${cab}: jammed door`, ...stationPoint(BASE_ST, -8.6, 12) });
+  const f = opts[Math.floor(Math.random() * opts.length)];
+  return { ...f, cost: 5 + Math.floor(Math.random() * 11), time: 30 + Math.floor(Math.random() * 121), status: 'broken' };
+}
+function updateFaults(dt) {
+  if (cable.south !== 'open' || cable.fault || ride.cab || ride.wait) return;
+  if (!cable.nextFault) cable.nextFault = dayNow() + 5;
+  if (dayNow() < cable.nextFault) return;
+  cable.fault = pickFault();
+  cable.nextFault = dayNow() + 5;
+  SFX.genStop();
+  applyFaultVisuals();
+  toast(`⚠ Cable car breakdown! ${cable.fault.name}. The cabins have stopped. Send June to repair it (${cable.fault.cost} 🪙) at the cable car station.`);
+  if (!$('cableOverlay').classList.contains('hidden')) renderCable();
+}
+// A small repair site at the broken part, run by the usual renovation crew.
+function makeRepairSite(f) {
+  const site = makeSite({
+    key: 'repair', title: 'Cable car repair', x: f.x, z: f.z, rot: cableLine.rot,
+    cost: { type: 'coin', n: f.cost }, buildTime: f.time,
+    startText: `${animals.cat.name} and her crew are on their way to fix it 🔧`,
+    doneText: `Fixed! ${f.name.split(':')[0]} works again. The cabins are moving 🚡`,
+    icons: ['⚠', '🔧', '🚡'], labels: ['Breakdown', 'Repair', ''],
+  });
+  const g = new THREE.Group();
+  g.position.set(f.x, 0, f.z);
+  g.rotation.y = cableLine.rot;
+  scene.add(g);
+  site.normal = new THREE.Group();
+  site.ruin = new THREE.Group();
+  // warning: a tripod sign with a flashing amber lamp
+  const warn = signMesh(site.ruin, '⚠ OUT OF ORDER', 1.6, 0.42, 0, 1.25, 0, 0, ['#ffcc00', '#111111', '#111111']);
+  warn.rotation.y = 0;
+  for (const x of [-0.6, 0.6]) cyl(site.ruin, 0.03, 0.03, 1.3, mats.darkMetal, x, 0.65, -0.03, 6);
+  const lamp = new THREE.Mesh(new THREE.SphereGeometry(0.09, 10, 8), mats.lampOff);
+  lamp.position.set(0, 1.6, 0);
+  site.ruin.add(lamp);
+  site.lampGlow = glow(lamp, mats.glowAmber, 1.4);
+  // while it is repaired: cones, a toolbox, a ladder and a work sign
+  const sc = new THREE.Group();
+  for (const [x, z] of [[-1.4, 1.6], [1.4, 1.6], [0, 2.2]]) cyl(sc, 0, 0.15, 0.4, mats.cone, x, 0.2, z, 10);
+  cbox(sc, 0.5, 0.25, 0.25, mats.cabinPaint, 0.8, 0.13, 0.6);
+  const ladder = new THREE.Group();
+  for (const x of [-0.2, 0.2]) cbox(ladder, 0.05, 2.6, 0.05, mats.steel, x, 1.3, 0);
+  for (let y = 0.3; y < 2.6; y += 0.35) cbox(ladder, 0.4, 0.04, 0.04, mats.steel, 0, y, 0);
+  ladder.position.set(-0.9, 0, -0.4);
+  ladder.rotation.x = -0.25;
+  sc.add(ladder);
+  const wip = signMesh(sc, 'REPAIR WORK', 1.4, 0.38, 0, 1.0, 2.6, 0, ['#ffcc00', '#111111', '#111111']);
+  wip.material = mats.signWip;
+  site.jib = new THREE.Object3D();
+  site.cable = new THREE.Object3D();
+  site.hook = new THREE.Object3D();
+  sc.add(site.jib, site.cable, site.hook);
+  site.scaffold = sc;
+  g.add(site.normal, site.ruin, sc);
+  shadowAll(g);
+  site.group = g;
+  site.poi = { icon: '', label: '' };
+  site.onStatus = (status) => {
+    if (status === 'open') finishRepair(site);
+  };
+  setSiteStatus(site, 'abandoned', 0);
+  return site;
+}
+function clearRepairSite() {
+  const site = cable.repairSite;
+  if (!site) return;
+  if (renovating === site) {
+    renovating = null;
+    clearWorkers();
+    setJuneWork(false);
+  }
+  scene.remove(site.group);
+  cable.repairSite = null;
+}
+function applyFaultVisuals() {
+  if (cable.fault && !cable.repairSite) cable.repairSite = makeRepairSite(cable.fault);
+  if (!cable.fault) clearRepairSite();
+}
+function startRepair() {
+  const f = cable.fault;
+  if (!f || f.status !== 'broken') return;
+  if (renovating) return cableMsg(`${animals.cat.name} is busy with the ${renovating.title}. Come back when it is done.`);
+  if (state.coins < f.cost) return cableMsg(`The repair costs ${f.cost} 🪙. You have ${state.coins}.`);
+  applyFaultVisuals();
+  const site = cable.repairSite;
+  site.cost.n = f.cost;
+  startRenovation(site);
+  if (renovating !== site) return;
+  f.status = 'repairing';
+  refreshHud();
+  closeCable();
+}
+function finishRepair(site) {
+  if (cable.repairSite !== site) return;
+  cable.fault = null;
+  cable.nextFault = dayNow() + 5;
+  setTimeout(() => {
+    if (cable.repairSite === site && !cable.fault) clearRepairSite();
+  }, 6000);
+  if (cable.gen && cable.genOn) SFX.genStart();
+}
+function renderRepairRow() {
+  let row = document.getElementById('cbRepairRow');
+  if (!row) {
+    const card = document.querySelector('#cableOverlay .card');
+    if (!card) return;
+    row = document.createElement('div');
+    row.id = 'cbRepairRow';
+    row.className = 'shop-item';
+    row.innerHTML = '<div class="shop-text"><b>⚠ Breakdown</b><small data-r="txt"></small></div><button class="primary" type="button" data-r="go">Repair</button>';
+    card.insertBefore(row, card.querySelector('#cbRide'));
+    row.querySelector('[data-r="go"]').addEventListener('click', () => { ensureAudio(); startRepair(); });
+  }
+  const f = cable.fault;
+  row.style.display = f ? '' : 'none';
+  if (!f) return;
+  const btn = row.querySelector('[data-r="go"]');
+  const tm = (sec) => `${Math.floor(sec / 60)}:${String(Math.ceil(sec) % 60).padStart(2, '0')}`;
+  if (f.status === 'repairing') {
+    row.querySelector('[data-r="txt"]').textContent = `${f.name}. ${animals.cat.name} and her crew are on it · ${tm(cable.repairSite ? cable.repairSite.left : 0)} left`;
+    btn.textContent = 'Repairing…';
+    btn.disabled = true;
+  } else {
+    row.querySelector('[data-r="txt"]').textContent = `${f.name}. Send ${animals.cat.name} and her crew: ${f.cost} 🪙, about ${tm(f.time)}.`;
+    btn.textContent = `Repair · 🪙 ${f.cost}`;
+    btn.disabled = false;
+  }
+}
+
+/* ---------- lights ---------- */
+function nightLevel() {
+  return clamp((0.62 - state.dayF) / 0.42, 0, 1);
+}
+function addCableLights(list) {
+  const f = nightLevel();
+  if (f < 0.05) return;
+  const add = (x, y, z, k, c) => list.push({ x, y, z, f: f * k, c, d: Math.hypot(x - player.x, z - player.z) });
+  if (cableBase.status === 'open') for (const lz of [-3, 4]) {
+    const p = stationPoint(BASE_ST, 0, lz);
+    add(p.x, 5.6, p.z, 0.9, 0xfff1d0);
+  }
+  if (cable.south === 'open') {
+    for (const lz of [-3, 4]) {
+      const p = stationPoint(PORT_ST, 0, lz);
+      add(p.x, 5.6, p.z, 0.9, 0xfff1d0);
+    }
+    for (const c of cable.cabins) add(c.x, c.floorY + 1.7, c.z, 0.45, 0xffe6a8);
+  }
+}
+function updateCableGlows() {
+  const f = nightLevel();
+  mats.glowWhite.opacity = 0.85 * f;
+  mats.glowAmber.opacity = 0.75 * f;
+  const blink = T % 1.6 < 0.3;
+  mats.glowRed.opacity = (blink ? 1 : 0.08) * (0.35 + 0.65 * f);
+  mats.beacon.color.setHex(blink ? 0xff2a2a : 0x5a1010);
+  const site = cable.repairSite;
+  if (site && site.lampGlow) {
+    const on = T % 0.8 < 0.4;
+    site.lampGlow.material = mats.glowAmber;
+    site.lampGlow.visible = on;
+    site.lampGlow.parent.material = on ? mats.cone : mats.lampOff;
+  }
+}
+
+/* ---------- South Port boats: buy a faster catch with lemons ---------- */
+let boatUI = null;
+function buildBoatPanel() {
+  const ov = document.createElement('div');
+  ov.id = 'boatOverlay';
+  ov.className = 'overlay hidden';
+  ov.innerHTML = `<div class="card shop-card" role="dialog" aria-label="Fishing boats">
+    <div class="md-head"><h2>⛵ South Port fishing boats</h2><button class="md-x" type="button" data-t="close" aria-label="Close">✕</button></div>
+    <p class="md-text" data-t="info"></p>
+    <div class="shop-item"><div class="shop-text"><b>🎣 ${FISH_UPGRADES[2].name}</b><small>${FISH_UPGRADES[2].text} · 🍋 ${FISH_UPGRADES[2].cost}</small></div><button class="primary" type="button" data-t="2">Buy</button></div>
+    <div class="shop-item"><div class="shop-text"><b>⛵ ${FISH_UPGRADES[3].name}</b><small>${FISH_UPGRADES[3].text} · 🍋 ${FISH_UPGRADES[3].cost}</small></div><button class="primary" type="button" data-t="3">Buy</button></div>
+    <p class="md-error" data-t="msg"></p>
+  </div>`;
+  document.body.appendChild(ov);
+  const q = (k) => ov.querySelector(`[data-t="${k}"]`);
+  q('close').addEventListener('click', closeBoats);
+  q('2').addEventListener('click', () => { ensureAudio(); buyFishUpgrade(2); });
+  q('3').addEventListener('click', () => { ensureAudio(); buyFishUpgrade(3); });
+  ov.addEventListener('click', (e) => { if (e.target === ov) closeBoats(); });
+  boatUI = { ov, info: q('info'), msg: q('msg'), b2: q('2'), b3: q('3') };
+}
+function renderBoats(msg = '') {
+  if (!boatUI) return;
+  boatUI.info.textContent = `Now: ${cable.fishLevel} ${cable.fishLevel === 1 ? 'fish' : 'fish'} a minute while you are within ${PORT_RANGE} m (crate holds ${crateMax()}). You have 🍋 ${countItem('lemon')}.`;
+  boatUI.b2.textContent = cable.fishLevel >= 2 ? 'Owned ✓' : 'Buy';
+  boatUI.b2.disabled = cable.fishLevel >= 2;
+  boatUI.b3.textContent = cable.fishLevel >= 3 ? 'Owned ✓' : 'Buy';
+  boatUI.b3.disabled = cable.fishLevel >= 3;
+  boatUI.msg.textContent = msg;
+}
+function openBoats() {
+  if (!boatUI) return;
+  renderBoats();
+  boatUI.ov.classList.remove('hidden');
+}
+function closeBoats() {
+  if (boatUI) boatUI.ov.classList.add('hidden');
+}
+function buyFishUpgrade(level) {
+  const up = FISH_UPGRADES[level];
+  if (cable.fishLevel >= level) return renderBoats('You already have this.');
+  if (cable.fishLevel < level - 1) return renderBoats(`Buy "${FISH_UPGRADES[level - 1].name}" first.`);
+  const have = countItem('lemon');
+  if (have < up.cost) return renderBoats(`You need 🍋 ${up.cost}. You have ${have}.`);
+  takeItems('lemon', up.cost);
+  cable.fishLevel = level;
+  cable.portT = 0;
+  renderInv();
+  SFX.chime();
+  renderBoats(`${up.name}! Now ${up.text}. 🐟`);
+  toast(`⛵ ${up.name}: South Port now brings ${up.text}.`);
 }
 
 function boardSpot(at) {
@@ -7662,7 +7951,7 @@ function updateCable(dt) {
   // generator: hum, vibration and a little exhaust
   const target = cableRunning() ? 1 : 0;
   cable.power += clamp(target - cable.power, -dt / 3, dt / 4);
-  if (cable.gen && cable.genOn) {
+  if (cable.gen && cable.genOn && !(cable.fault && cable.fault.key === 'generator')) {
     cable.genBody.position.x = Math.sin(T * 90) * 0.004;
     cable.exhaustT -= dt;
     if (cable.exhaustT <= 0 && Math.hypot(player.x - GEN_POS.x, player.z - GEN_POS.z) < 40) {
@@ -7692,7 +7981,8 @@ function updateCable(dt) {
       cable.hum = g;
     }
     const d = Math.hypot(player.x - GEN_POS.x, player.z - GEN_POS.z);
-    const v = cable.gen && cable.genOn ? 0.05 * Math.pow(clamp(1 - d / 26, 0, 1), 2) : 0;
+    const genBroken = cable.fault && cable.fault.key === 'generator';
+    const v = cable.gen && cable.genOn && !genBroken ? 0.05 * Math.pow(clamp(1 - d / 26, 0, 1), 2) : 0;
     cable.hum.gain.setTargetAtTime(v, actx.currentTime, 0.4);
   }
   // cabins
@@ -7735,6 +8025,8 @@ function updateCable(dt) {
       a.root.visible = false;
     }
   }
+  updateFaults(dt);
+  updateCableGlows();
   updatePort(dt);
 }
 
@@ -7745,10 +8037,10 @@ function updatePort(dt) {
     b.rotation.z = Math.sin(T * 0.9 + i) * 0.03;
   }
   const near = Math.hypot(player.x - PORT_QUAY.x, player.z - PORT_QUAY.z) < PORT_RANGE;
-  if (near && cable.fish + cable.gold < PORT_CRATE_MAX) {
+  if (near && cable.fish + cable.gold < crateMax()) {
     cable.portT += dt;
-    if (cable.portT >= PORT_FISH_EVERY) {
-      cable.portT -= PORT_FISH_EVERY;
+    if (cable.portT >= fishEvery()) {
+      cable.portT -= fishEvery();
       const gold = Math.random() < 0.05;
       if (gold) cable.gold++;
       else cable.fish++;
@@ -7783,7 +8075,7 @@ function renderCrate() {
 }
 function collectPortFish() {
   if (!cable.fish && !cable.gold) {
-    const left = Math.ceil(PORT_FISH_EVERY - cable.portT);
+    const left = Math.ceil(fishEvery() - cable.portT);
     toast(`The crate is empty. The next fish comes in about ${left} s, while you stay within ${PORT_RANGE} m.`);
     return;
   }
@@ -7854,6 +8146,8 @@ function serializeCable() {
   return {
     gen: cable.gen, on: cable.genOn, south: cable.south,
     left: Math.round(cable.southLeft * 10) / 10, fish: cable.fish, gold: cable.gold, portT: Math.round(cable.portT), tickets: cable.tickets,
+    fishLevel: cable.fishLevel, nextFault: Math.round(cable.nextFault * 100) / 100,
+    fault: cable.fault ? { ...cable.fault, left: Math.round((cable.repairSite ? cable.repairSite.left : cable.fault.time) * 10) / 10 } : null,
   };
 }
 function applyCable(d) {
@@ -7870,10 +8164,32 @@ function applyCable(d) {
   cable.south = ['none', 'building', 'open'].includes(c.south) && cableBase.status === 'open' ? c.south : 'none';
   cable.southLeft = cable.south === 'building' ? clamp(n(c.left) || ROUTE_TIME, 0, ROUTE_TIME) : 0;
   cable.stageIdx = -1;
-  cable.fish = clamp(Math.floor(n(c.fish)), 0, PORT_CRATE_MAX);
-  cable.gold = clamp(Math.floor(n(c.gold)), 0, PORT_CRATE_MAX - cable.fish);
-  cable.portT = clamp(n(c.portT), 0, PORT_FISH_EVERY);
+  cable.fishLevel = clamp(Math.floor(n(c.fishLevel)) || 1, 1, 3);
+  cable.fish = clamp(Math.floor(n(c.fish)), 0, crateMax());
+  cable.gold = clamp(Math.floor(n(c.gold)), 0, crateMax() - cable.fish);
+  cable.portT = clamp(n(c.portT), 0, fishEvery());
   cable.tickets = clamp(Math.floor(n(c.tickets)), 0, 99);
+  clearRepairSite();
+  cable.fault = null;
+  const f = c.fault;
+  if (cable.south === 'open' && f && typeof f === 'object' && typeof f.name === 'string' && Number.isFinite(f.x) && Number.isFinite(f.z)) {
+    cable.fault = {
+      key: String(f.key || 'part'), name: f.name.slice(0, 60), x: f.x, z: f.z,
+      cost: clamp(Math.floor(n(f.cost)) || 10, 5, 15), time: clamp(n(f.time) || 60, 30, 150), status: 'broken',
+    };
+    if (f.status === 'repairing' && !renovating) {
+      const site = makeRepairSite(cable.fault);
+      cable.repairSite = site;
+      cable.fault.status = 'repairing';
+      renovating = site;
+      site.stageIdx = -1;
+      setSiteStatus(site, 'building', clamp(n(f.left) || cable.fault.time, 1, cable.fault.time));
+      spawnWorkers(true);
+      setJuneWork(true);
+    }
+  }
+  cable.nextFault = n(c.nextFault) || dayNow() + 5;
+  applyFaultVisuals();
   cable.power = cableRunning() ? 1 : 0;
   placeCabins();
   applyCableVisuals();
