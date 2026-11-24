@@ -34,6 +34,13 @@ Written with Three.js and no build step, so it runs directly on GitHub Pages.
 - Open the **map** (🗺, minimap or **M**), tap a spot to set a waypoint and walk there.
 - The **☰ menu** (top right) holds the camera, rain, sound and help buttons, and lets you hide the minimap, the stats panel, hunger and stamina, or the Tasks and Call buttons. Tap the 🍋 title to fold the top-left panel. These choices are remembered on this device.
 - The garden looks more alive: grass and flowers sway in the wind (stronger in the rain), the ground has patches and bare spots, pollen floats in the sunlight, and the lemon kicks up dust when it lands after a jump.
+- Build the **cable car** about 50 m south of home. It works like a real detachable gondola:
+  - **Base station** (🪙 30): June and the lemon builders build it in about 1:30, with a tower crane.
+  - **Generator** (🪙 30): powers the drive. Tap it to turn it on or off. It hums quietly and puffs a little smoke while it runs.
+  - **South Port line** (🪙 30): about 300 m along the river. The towers go up one by one, then the haul rope is pulled, the South Port station is built and the 5 cabins are hung (about 1:30).
+  - **Riding:** with the generator on, the 5 cabins go round non stop. They slow down in the stations, go round the bullwheel, speed up to 6 m/s on the line and click over the tower wheels. Tap a station and **Ride**, wait on the platform and step into the next cabin. Pets that follow you ride along.
+  - **South Port** is a fishing harbour with a quay, a pier and boats. While you are within 30 m of it, the fishermen put 1 fish a minute in its crate (up to 12; sometimes a golden fish). Tap the crate to take them.
+  - **North Port** is locked for now (coming soon).
 - Sleep in the tent at night, sprint with stamina, watch the rain and the day/night cycle.
 - Follow the stone path from the tent past Capi's house to the river and cross it on the bridge (or wade through, slower). Capi and June sometimes go to the river to drink. Listen to the water, the frogs at night and watch the fireflies.
 
