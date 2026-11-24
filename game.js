@@ -4470,14 +4470,14 @@ function drawMap(cv, range, big) {
     const pad = big ? 14 : 9;
     const inside = x >= pad && x <= W - pad && y >= pad && y <= H - pad;
     if (!inside) {
-      if (p.type !== 'vet' && p.type !== 'park' && p.type !== 'port') continue;
+      if (p.type !== 'vet' && p.type !== 'park' && p.type !== 'port' && p.type !== 'cable') continue;
       x = clamp(x, pad, W - pad);
       y = clamp(y, pad, H - pad);
       g.globalAlpha = 0.6;
     }
     g.font = `${big ? 20 : 12}px system-ui, sans-serif`;
     g.fillText(p.icon, x, y);
-    const showLabel = p.type === 'vet' || p.type === 'park' || p.type === 'port' || range <= 60;
+    const showLabel = p.type === 'vet' || p.type === 'park' || p.type === 'port' || p.type === 'cable' || range <= 60;
     if (big && inside && p.label && showLabel) {
       g.font = '700 11px system-ui, sans-serif';
       g.fillStyle = 'rgba(0,0,0,0.55)';
@@ -6433,6 +6433,7 @@ const ROUTE_TIME = 90;     // seconds to build the South Port line
 const PORT_RANGE = 30;     // the port only works while you are this close
 const PORT_FISH_EVERY = 60;
 const PORT_CRATE_MAX = 12;
+const CABLE_FARE = 5;       // one-way ticket
 
 const CABLE_BASE = { x: 2, z: 48 };
 const SOUTH_PORT = { x: riverX(345) - RIVER_W / 2 - 12.5, z: 345 };
@@ -7003,8 +7004,8 @@ function buildCableCar() {
     hintText: `The cable car base costs ${CABLE_COST} 🪙.`,
     startText: 'Construction started! June and the lemon builders are on their way 🏗',
     doneText: 'The cable car base is ready! 🚡 Now build the generator and the line to South Port.',
-    icons: ['📐', '🏗', '🚡'],
-    labels: ['Cable car base (build)', 'Cable car base (building)', 'Cable car base'],
+    icons: ['🚡', '🏗', '🚡'],
+    labels: ['Cable car (build here)', 'Cable car (building)', 'Cable car'],
     stages: [
       { at: 0, name: 'Pouring the foundation' },
       { at: 0.22, name: 'Raising the steel frame' },
@@ -7032,6 +7033,10 @@ function buildCableCar() {
   for (const [x, z, w, d] of [[0, -8.7, 10.4, 0.03], [0, 9.7, 10.4, 0.03], [-5.2, 0.5, 0.03, 18.4], [5.2, 0.5, 0.03, 18.4]]) cbox(ruin, w, 0.05, d, mats.ribbon, x, 0.72, z);
   const sign = signMesh(ruin, `CABLE CAR · ${CABLE_COST} 🪙`, 2.4, 0.6, 0, 1.15, 10.1, 0, ['#fff59d', '#3b2412', '#5a3a1e']);
   for (const x of [-1, 1]) cyl(ruin, 0.04, 0.04, 1.2, mats.darkWood, x, 0.6, 10.05, 6);
+  // a tall billboard you can see from home
+  const board = signMesh(ruin, `🚡 CABLE CAR · BUILD HERE · ${CABLE_COST} 🪙`, 5.2, 1.3, 0, 3.0, -9.4, Math.PI, ['#fff59d', '#c8332b', '#c8332b']);
+  for (const x of [-2.3, 2.3]) cyl(ruin, 0.08, 0.08, 3.7, mats.darkWood, x, 1.85, -9.3, 8);
+  pickable(board, 'ruin', cableBase, 'Cable car base plot');
   const tripod = new THREE.Group();
   tripod.position.set(2.5, 0, 6);
   for (let k = 0; k < 3; k++) {
@@ -7052,9 +7057,19 @@ function buildCableCar() {
       obstacles.push(...stObs);
     }
   };
-  cableBase.poi = addPoi({ type: 'shop', x: CABLE_BASE.x, z: CABLE_BASE.z, icon: '📐', label: 'Cable car base', clear: 16 });
+  cableBase.poi = addPoi({ type: 'cable', x: CABLE_BASE.x, z: CABLE_BASE.z, icon: '📐', label: 'Cable car base', clear: 16 });
   sites.push(cableBase);
   setSiteStatus(cableBase, 'abandoned', 0);
+
+  // signpost by the path near home
+  const post = new THREE.Group();
+  post.position.set(5.5, 0, 7);
+  cyl(post, 0.06, 0.07, 2.4, mats.darkWood, 0, 1.2, 0, 8);
+  const arrow = signMesh(post, '🚡 CABLE CAR · 40 m SOUTH', 1.9, 0.45, 0, 2.0, 0.08, Math.PI, ['#fff59d', '#3b2412', '#5a3a1e']);
+  arrow.rotation.y = Math.PI;
+  shadowAll(post);
+  scene.add(post);
+  obstacles.push({ x: 5.5, z: 7, r: 0.25, ck: 'static' });
 
   buildGenerator();
   for (const t of cableLine.towers) routePart(buildTower(t), 0.05 + (0.5 * t.i) / Math.max(1, cableLine.towers.length - 1));
@@ -7224,7 +7239,7 @@ function renderCable() {
     south.disabled = true;
   }
   const rideBtn = $('cbRide');
-  rideBtn.textContent = atBase ? '🚡 Ride to South Port' : '🚡 Ride to the base';
+  rideBtn.textContent = `${atBase ? '🚡 Ride to South Port' : '🚡 Ride to the base'} · 🪙 ${CABLE_FARE}`;
   rideBtn.disabled = cable.south !== 'open';
   $('cbMsg').textContent = '';
 }
@@ -7299,6 +7314,7 @@ function requestRide() {
   if (cable.south !== 'open') return cableMsg('There is no line yet.');
   if (!cable.gen) return cableMsg('The line needs a generator to run.');
   if (!cable.genOn) return cableMsg(cable.overlayAt === 'base' ? 'Turn the generator on first.' : 'The generator at the base is off, so the cabins are stopped.');
+  if (state.coins < CABLE_FARE) return cableMsg(`A ticket costs ${CABLE_FARE} 🪙. You have ${state.coins}.`);
   const at = cable.overlayAt;
   const p = boardSpot(at);
   closeCable();
@@ -7306,13 +7322,19 @@ function requestRide() {
 }
 function startWaiting(at) {
   ride.wait = at;
-  toast('Waiting for the next cabin… 🚡');
+  toast(`Waiting for the next cabin… The ticket (${CABLE_FARE} 🪙) is paid when you step in. 🚡`);
 }
 function followersNear() {
   return animalList.filter((a) => state.call && a.friend >= FOLLOW_MIN && Math.hypot(a.x - player.x, a.z - player.z) < 10);
 }
 function board(c) {
   ride.wait = null;
+  if (state.coins < CABLE_FARE) {
+    toast(`A ticket costs ${CABLE_FARE} 🪙. You have ${state.coins}.`);
+    return;
+  }
+  state.coins -= CABLE_FARE;
+  refreshHud();
   ride.cab = c;
   ride.to = c.seg === 0 ? 'port' : 'base';
   ride.riders = followersNear();
@@ -7320,7 +7342,8 @@ function board(c) {
   goal = null;
   dirs.clear();
   SFX.cableBell();
-  toast(ride.riders.length ? `All aboard! ${ride.riders.map((a) => a.name).join(' and ')} ride with you 🚡` : 'All aboard! 🚡');
+  const pets = ride.riders.length ? ` ${ride.riders.map((a) => a.name).join(' and ')} ride with you for free.` : '';
+  toast(`All aboard! Ticket: ${CABLE_FARE} 🪙.${pets} 🚡`);
 }
 function alight() {
   const p = arriveSpot(ride.to);
@@ -7505,10 +7528,22 @@ function cableChipText() {
 }
 
 function drawCableOnMap(g, toS, s) {
-  if (cable.south === 'none') return;
   const L = cableLine;
   const [ax, ay] = toS(CABLE_BASE.x, CABLE_BASE.z);
   const [bx, by] = toS(SOUTH_PORT.x, SOUTH_PORT.z);
+  if (cable.south === 'none') {
+    // the planned line, faint and dashed
+    g.save();
+    g.strokeStyle = 'rgba(255,255,255,0.55)';
+    g.lineWidth = 2;
+    g.setLineDash([3, 6]);
+    g.beginPath();
+    g.moveTo(ax, ay);
+    g.lineTo(bx, by);
+    g.stroke();
+    g.restore();
+    return;
+  }
   g.save();
   g.strokeStyle = 'rgba(40,40,40,0.85)';
   g.lineWidth = Math.max(1.5, s * 1.2);
