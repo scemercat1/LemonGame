@@ -4319,6 +4319,7 @@ function executeGoal(g) {
       break;
     case 'portcrate': collectPortFish(); break;
     case 'cableBoard': startWaiting(g.at); break;
+    case 'via': goal = g.then; break;
     case 'decor': pickupDecor(g.ref); break;
     case 'placeDecor': placeDecor(g.type, g.x, g.z); break;
     case 'fish': castLine(g.cast.x, g.cast.z); break;
@@ -4332,6 +4333,10 @@ function executeGoal(g) {
 }
 
 function makeGoal(pk) {
+  if (pk.kind === 'cablebase' || pk.kind === 'cableport') {
+    const st = pk.kind === 'cablebase' ? BASE_ST : PORT_ST;
+    return chainGoal(st, stationWay(st), { kind: pk.kind, ref: pk.ref, range: 0.6 });
+  }
   const touch = pk.kind === 'ruin' && pk.ref && pk.ref.touchR;
   return { kind: pk.kind, ref: pk.ref, range: touch ? pk.ref.touchR - 0.3 : RANGE[pk.kind] ?? 1.5 };
 }
@@ -6560,8 +6565,39 @@ const BASE_ST = { x: CABLE_BASE.x, z: CABLE_BASE.z, rot: cableLine.rot };
 const PORT_ST = { x: SOUTH_PORT.x, z: SOUTH_PORT.z, rot: cableLine.rot + Math.PI };
 const GEN_POS = stationPoint(BASE_ST, -11.6, 3);
 const PORT_QUAY = stationPoint(PORT_ST, -11, 0);   // the port's quay on the river bank (its local -x faces the water)
-const CABLE_BASE_REF = stationPoint(BASE_ST, 4.3, 7);
-const CABLE_PORT_REF = stationPoint(PORT_ST, -4.3, 7);
+// the ticket kiosks stand outside each station, on the side where you board
+const KIOSK = { x: 8.2, z: -6.5 };
+const KIOSK_FRONT = { x: 6.2, z: -6.5 };   // the window faces the platform, with a free lane between them
+const CABLE_BASE_REF = stationPoint(BASE_ST, KIOSK_FRONT.x, KIOSK_FRONT.z);
+const CABLE_PORT_REF = stationPoint(PORT_ST, KIOSK_FRONT.x, KIOSK_FRONT.z);
+
+function toStation(st, x, z) {
+  const c = Math.cos(st.rot);
+  const s = Math.sin(st.rot);
+  const dx = x - st.x;
+  const dz = z - st.z;
+  return { lx: dx * c - dz * s, lz: dx * s + dz * c };
+}
+// Waypoints (in the station's frame) that bring the lemon round the station to the lane
+// beside the ticket kiosk, without walking into the platforms, the cabins or the walls.
+function stationWay(st) {
+  const { lx, lz } = toStation(st, player.x, player.z);
+  if (lx > 5.6 && lx < 7.0 && lz > -11.5 && lz < 1) return [];   // already beside the kiosk
+  if (lx >= 5.6) return lz < -5 ? [[6.1, -11]] : [];
+  if (lz <= -9.8) return [[6.1, -11]];
+  if (lx > 3.6) return [[4.4, -5.3], [6.1, -5.3]];               // from the platform, out between the columns
+  if (lz >= 22 || (lz > 9.8 && lx >= 0)) return [[7.5, Math.max(lz, 22)]];
+  if (lz > 9.8) return [[-8.6, lz], [-8.6, -9.5], [6.1, -11]];
+  return lx < -5.6 ? [[-8.6, -9.5], [6.1, -11]] : [[-4.4, -11], [6.1, -11]];
+}
+function chainGoal(st, pts, last) {
+  let g = last;
+  for (let i = pts.length - 1; i >= 0; i--) {
+    const p = stationPoint(st, pts[i][0], pts[i][1]);
+    g = { kind: 'via', x: p.x, z: p.z, range: 0.45, then: g };
+  }
+  return g;
+}
 const GEN_REF = { x: GEN_POS.x, z: GEN_POS.z };
 const PORT_CRATE = stationPoint(PORT_ST, -9.5, 2.5);
 
@@ -6724,6 +6760,13 @@ function buildStation(g, title, part) {
     P(cyl(g, 0.05, 0.05, 1.0, mats.steel, x + 0.55, 0.6, 0.5, 8), 0.9);
     P(cbox(g, 1.1, 0.05, 0.05, mats.cabinPaint, x, 1.0, 0.5), 0.9);
   }
+  // ticket kiosk on the boarding side, its window facing the platform
+  P(cbox(g, 1.6, 2.3, 1.8, mats.stationRoof, KIOSK.x, 1.15, KIOSK.z), 0.9);
+  P(cbox(g, 0.06, 0.9, 1.3, mats.stationGlass, KIOSK.x - 0.82, 1.55, KIOSK.z), 0.92);
+  P(cbox(g, 0.4, 0.07, 1.4, mats.wood2, KIOSK.x - 0.98, 1.0, KIOSK.z), 0.92);
+  P(cbox(g, 1.9, 0.15, 2.1, mats.cabinPaint, KIOSK.x, 2.37, KIOSK.z), 0.92);
+  P(signMesh(g, '🎟 TICKETS', 1.6, 0.42, KIOSK.x - 0.86, 2.05, KIOSK.z, -Math.PI / 2, ['#fff59d', '#c8332b', '#c8332b']), 0.94);
+  P(signMesh(g, '🎟 TICKETS', 1.6, 0.42, KIOSK.x + 0.86, 2.05, KIOSK.z, Math.PI / 2, ['#fff59d', '#c8332b', '#c8332b']), 0.94);
   // operator booth outside the platform
   P(cbox(g, 2.0, 2.4, 2.0, mats.stationRoof, -6.6, 1.2, 6.5), 0.9);
   P(cbox(g, 2.06, 1.0, 1.7, mats.stationGlass, -6.6, 1.7, 6.5), 0.92);
@@ -6746,6 +6789,7 @@ function stationObstacles(st) {
   add(0, -CABLE_WHEEL, CABLE_GAUGE + 0.6);
   for (let z = -CABLE_WHEEL; z <= 8; z += 1.6) add(0, z, 1.5);
   add(-6.6, 6.5, 1.3);
+  add(KIOSK.x, KIOSK.z, 1.15);
   return list;
 }
 function laneObstacles(st) {
@@ -7413,6 +7457,9 @@ function renderCable() {
   $('cbTickets').textContent = cable.tickets;
   $('cbBuy1').disabled = cable.south !== 'open';
   $('cbBuy2').disabled = cable.south !== 'open';
+  $('cbTicketTxt').textContent = cable.south === 'open'
+    ? `One way 🪙 ${CABLE_FARE} · there and back 🪙 ${CABLE_FARE * 2}`
+    : `On sale once the South Port line is renovated (🪙 ${CABLE_FARE} one way).`;
   $('cbMsg').textContent = '';
 }
 function cableMsg(t) {
@@ -7488,9 +7535,13 @@ function requestRide() {
   if (!cable.genOn) return cableMsg(cable.overlayAt === 'base' ? 'Turn the generator on first.' : 'The generator at the base is off, so the cabins are stopped.');
   if (cable.tickets < 1) return cableMsg(`Buy a ticket first: 1 ride 🪙 ${CABLE_FARE}, 2 rides (there and back) 🪙 ${CABLE_FARE * 2}.`);
   const at = cable.overlayAt;
+  const st = at === 'base' ? BASE_ST : PORT_ST;
   const p = boardSpot(at);
   closeCable();
-  goal = { kind: 'cableBoard', x: p.x, z: p.z, range: 0.6, at };
+  const board = { kind: 'cableBoard', x: p.x, z: p.z, range: 0.6, at };
+  const { lx, lz } = toStation(st, player.x, player.z);
+  const onPlatform = lx > 3.6 && lx < 5.6 && lz > -9.8 && lz < 10;
+  goal = onPlatform ? board : chainGoal(st, [...stationWay(st), [6.1, -5.3], [4.4, -5.3]], board);
 }
 function startWaiting(at) {
   ride.wait = at;
