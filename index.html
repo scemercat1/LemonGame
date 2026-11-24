@@ -350,7 +350,9 @@
 
     /* ---------- phone: keep the inventory above the arrows ---------- */
     body.touch .bottom { bottom: 172px; }
-    body.touch .slot { width: 48px; height: 48px; font-size: 22px; }
+    body.touch .slot { width: 44px; height: 44px; font-size: 20px; }
+    body.touch .actions { flex-direction: row; align-items: flex-end; gap: 8px; }
+    body.touch .action { width: 60px; height: 60px; font-size: 12px; }
     body.touch #minimap { width: 96px; height: 96px; }
     body.touch .top-right { gap: 5px; right: 8px; top: 8px; }
     body.touch .round { width: 36px; height: 36px; font-size: 16px; }
@@ -506,6 +508,32 @@
     }
     #tagName:focus { outline: none; border-color: var(--lemon); }
 
+    /* ---------- lemonade stand, market and missions ---------- */
+    #standOverlay, #marketOverlay, #missionsOverlay { z-index: 36; }
+    .stand-stock { font-size: 13px; font-weight: 700; margin: 6px 0; }
+    .tabs { display: flex; gap: 6px; margin: 8px 0 4px; }
+    .tabs button {
+      flex: 1;
+      border: 2px solid transparent;
+      border-radius: 12px;
+      background: #eee8cc;
+      padding: 8px 4px;
+      font-size: 13px;
+      font-weight: 800;
+      color: var(--ink);
+      cursor: pointer;
+    }
+    .tabs button.sel { border-color: var(--lemon); background: #fff7c2; }
+    #mkBody .shop-pets { margin-top: 10px; }
+    #mkBody .primary:disabled { opacity: 0.55; }
+    .missions { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+    .missions li { background: #f6f2d8; border-radius: 14px; padding: 10px 12px; }
+    .missions li.done { background: #e6f6dc; }
+    .missions .ms-top { display: flex; justify-content: space-between; gap: 10px; font-size: 14px; }
+    .missions .bar > i { background: linear-gradient(90deg, #ffd83a, #f0a020); }
+    .missions small { font-size: 11px; opacity: 0.7; }
+    #missionsBtn.on { background: var(--leaf); color: #fff; }
+
     /* ---------- sleep fade ---------- */
     #fade {
       position: fixed;
@@ -633,6 +661,7 @@
     <div class="row"><span>🍋 Lemons</span><b id="sLemons">0</b></div>
     <div class="row"><span>💗 Pets</span><b id="sPets">0</b></div>
     <div class="row"><span>🍽️ Feedings</span><b id="sFed">0</b></div>
+    <div class="row"><span>🪙 Coins</span><b id="sCoins">0</b></div>
     <div class="friend">
       <div class="lbl"><span>🐶 <span id="fDogName">Capi</span></span><span id="fDogLvl">Acquaintance</span></div>
       <div class="bar"><i id="fDogBar"></i></div>
@@ -702,6 +731,8 @@
       <div class="slot" data-key="3"><span class="icon"></span><span class="count"></span></div>
       <div class="slot" data-key="4"><span class="icon"></span><span class="count"></span></div>
       <div class="slot" data-key="5"><span class="icon"></span><span class="count"></span></div>
+      <div class="slot" data-key="6"><span class="icon"></span><span class="count"></span></div>
+      <div class="slot" data-key="7"><span class="icon"></span><span class="count"></span></div>
     </div>
   </div>
 
@@ -714,6 +745,7 @@
 
   <div class="actions">
     <button id="sprintBtn" class="action touch-only" aria-label="Sprint">SPRINT</button>
+    <button id="missionsBtn" class="action" aria-label="Daily missions">📋<br>Tasks</button>
     <button id="callBtn" class="action" aria-label="Call friends">🐾<br>Call</button>
   </div>
 
@@ -799,6 +831,56 @@
     </div>
   </div>
 
+  <div id="standOverlay" class="overlay hidden">
+    <div class="card shop-card" role="dialog" aria-labelledby="standTitle">
+      <div class="md-head">
+        <h2 id="standTitle">🥤 Lemonade stand</h2>
+        <button id="standClose" class="md-x" type="button" aria-label="Close">✕</button>
+      </div>
+      <p class="md-text">Make drinks here. During the day, visitors come and buy them.</p>
+      <p id="standStock" class="stand-stock"></p>
+      <p id="fairNote" class="md-note hidden">🍂 Autumn fair: every drink sells for 2 🪙 more!</p>
+      <div class="shop-item">
+        <div class="shop-text"><b>🥤 Lemonade</b><small>🍋 × 2 → sells for <span id="priceNormal">5</span> 🪙</small></div>
+        <button id="makeNormal" class="primary" type="button">Make</button>
+      </div>
+      <div class="shop-item">
+        <div class="shop-text"><b>💜 Blueberry lemonade</b><small>🍋 × 2 + 🫐 × 1 → sells for <span id="pricePremium">9</span> 🪙</small></div>
+        <button id="makePremium" class="primary" type="button">Make</button>
+      </div>
+      <p id="standMsg" class="md-error"></p>
+    </div>
+  </div>
+
+  <div id="marketOverlay" class="overlay hidden">
+    <div class="card shop-card" role="dialog" aria-labelledby="mkTitle">
+      <div class="md-head">
+        <h2 id="mkTitle">🏪 Lemon Market</h2>
+        <button id="mkClose" class="md-x" type="button" aria-label="Close">✕</button>
+      </div>
+      <p class="md-text">You have <b id="mkCoins">0</b> 🪙</p>
+      <div class="tabs">
+        <button type="button" data-tab="pets">🐾 Pets</button>
+        <button type="button" data-tab="garden">🌷 Garden</button>
+        <button type="button" data-tab="tools">🎣 Tools</button>
+        <button type="button" data-tab="sell">💰 Sell</button>
+      </div>
+      <div id="mkBody"></div>
+      <p id="mkMsg" class="md-error"></p>
+    </div>
+  </div>
+
+  <div id="missionsOverlay" class="overlay hidden">
+    <div class="card shop-card" role="dialog" aria-labelledby="msTitle">
+      <div class="md-head">
+        <h2 id="msTitle">📋 Daily missions</h2>
+        <button id="msClose" class="md-x" type="button" aria-label="Close">✕</button>
+      </div>
+      <p class="md-text">New missions every day. Rewards are paid in coins 🪙.</p>
+      <ul id="msList" class="missions"></ul>
+    </div>
+  </div>
+
   <div id="fade"></div>
 
   <div id="loading">Loading the garden…</div>
@@ -812,13 +894,15 @@
         <ul>
           <li><b>W A S D</b> – move · <b>Shift</b> – sprint</li>
           <li><b>Left click</b> – pet, shop, serve a plate, open the chest, sleep in the tent</li>
-          <li><b>1–5</b> – select an item · <b>E</b> or click the ground – eat a lemon / place a torch</li>
+          <li><b>1–7</b> – select an item · <b>E</b> or click the ground – eat a lemon / place a torch</li>
           <li><b>F</b> – call Capi and June to follow you</li>
           <li><b>M</b> – map: click it to set a waypoint and walk there</li>
           <li><b>V</b> or 🎥 – switch between third person and first person</li>
           <li>Bring <b>7 lemons</b> to the abandoned Chest Shop to renovate it and unlock torches</li>
           <li>Chest Shop: torches and <b>name tags</b> (🍋 × 5) to rename your pets</li>
           <li>Pick <b>blueberries</b> in the forests (max 6) and serve them: the next vet check-up moves one day later</li>
+          <li><b>Lemonade stand</b>: make lemonade, visitors buy it for 🪙 · <b>Lemon Market</b>: accessories, garden decorations, fishing rod</li>
+          <li><b>📋 Tasks</b>: daily missions for coins · seasons change every 4 days (winter: the river freezes, skate on it!)</li>
           <li><b>Drag with the mouse</b> – rotate · <b>Wheel</b> – zoom</li>
         </ul>
       </div>
@@ -834,6 +918,8 @@
           <li>Bring <b>7 lemons</b> to the abandoned Chest Shop to renovate it and unlock torches</li>
           <li>Chest Shop: torches and <b>name tags</b> (🍋 × 5) to rename your pets</li>
           <li>Pick <b>blueberries</b> in the forests (max 6) and serve them: the next vet check-up moves one day later</li>
+          <li><b>Lemonade stand</b>: make lemonade, visitors buy it for 🪙 · <b>Lemon Market</b>: accessories, garden decorations, fishing rod</li>
+          <li><b>📋 Tasks</b>: daily missions for coins · seasons change every 4 days (winter: the river freezes, skate on it!)</li>
           <li><b>Drag with your finger</b> – rotate the camera</li>
         </ul>
       </div>
