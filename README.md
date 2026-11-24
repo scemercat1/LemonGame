@@ -24,6 +24,11 @@ Written with Three.js and no build step, so it runs directly on GitHub Pages.
 - Collect lemons; select one and tap the screen (or press **E**) to eat it and fill the hunger bar.
 - Find **forests** and pick **blueberries** (max 6 in the inventory). Serve them on Capi's or June's plate: their next vet check-up moves one day later.
 - Buy a **name tag** at the Chest Shop (🍋 × 5) to give Capi or June a name of your own.
+- Run a **lemonade stand**: make lemonade (🍋 × 2) or blueberry lemonade (🍋 × 2 + 🫐), and lemon visitors buy it for coins 🪙 during the day.
+- Spend coins at the **Lemon Market**: collars, party hats and scarves for your pets, garden decorations (flower pots, lanterns that glow at night, benches, fences) and a **fishing rod**. Sell your fish there too.
+- Complete 3 **daily missions** 📋 for coins.
+- **Seasons** change every 4 days: spring flowers, summer star showers, an autumn fair (lemonade sells for more) and winter snow with a Christmas tree and a frozen river you can skate on.
+- **Fish** in the river with the rod (not in winter): fish feed your pets, golden fish sell for 20 🪙.
 - Open the **map** (🗺, minimap or **M**), tap a spot to set a waypoint and walk there.
 - Sleep in the tent at night, sprint with stamina, watch the rain and the day/night cycle.
 - Follow the stone path from the tent past Capi's house to the river and cross it on the bridge (or wade through, slower). Capi and June sometimes go to the river to drink. Listen to the water, the frogs at night and watch the fireflies.

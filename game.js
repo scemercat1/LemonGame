@@ -88,7 +88,7 @@ const STAMINA_DRAIN = 24;
 const STAMINA_REGEN = 16;
 const LEMON_FILL = 20;
 const MAX_STACK = 10;
-const SLOTS = 5;
+const SLOTS = 7;
 const FOLLOW_MIN = 20;
 const VET_EVERY_DAYS = 3;
 const SICK_CHANCE_PER_HOUR = 0.015;
@@ -97,6 +97,7 @@ const TORCH_LIGHTS = 6;
 const EAT_TIME = 1.4;
 const NAMES = { dog: 'Capi', cat: 'June' };
 const RANGE = {
+  stand: 2.4, market: 2.6, decor: 1.6,
   food: 2.6, shed: 2.6, juneshop: 2.6, chest: 2.3, bed: 2.0, plate: 1.9, dog: 2.1, cat: 2.1,
   crow: 3.2, lemon: 0.9, torch: 1.6, vet: 4.6, walk: 0.3, placeTorch: 0.8, waypoint: 1.5, ruin: 3.0, berry: 1.4,
 };
@@ -115,6 +116,8 @@ const LABELS = {
   torch: 'Pick up torch',
   vet: 'Vet clinic',
   ruin: 'Abandoned Chest Shop',
+  stand: 'Lemonade stand',
+  market: 'Lemon Market',
 };
 const FOOD_REF = { x: HOUSE.x, z: HOUSE.z };
 const SHED_REF = { x: SHED.x, z: SHED.z };
@@ -126,13 +129,20 @@ const NAME_TAG_COST = 5;
 const NAME_RE = /^[\p{L}\p{N}][\p{L}\p{N} _'.-]{0,13}$/u;
 const BERRY_MAX = 6;          // at most 6 blueberries in the inventory
 const BERRIES_PER_BUSH = 2;
-const ITEM_MAX = { blueberry: BERRY_MAX };
+const ITEM_MAX = { blueberry: BERRY_MAX, rod: 1 };
 const ITEMS = {
   food: { icon: '🥣', name: 'Capi food' },
   catfood: { icon: '🐟', name: 'June food' },
   lemon: { icon: '🍋', name: 'Lemon' },
   torch: { icon: '🔥', name: 'Torch' },
   blueberry: { icon: '🫐', name: 'Blueberries' },
+  rod: { icon: '🎣', name: 'Fishing rod' },
+  fish: { icon: '🐠', name: 'Fish' },
+  goldfish: { icon: '🐡', name: 'Golden fish' },
+  flowerpot: { icon: '🌷', name: 'Flower pot' },
+  lantern: { icon: '🏮', name: 'Lantern' },
+  bench: { icon: '🪑', name: 'Bench' },
+  fence: { icon: '🪵', name: 'Fence' },
 };
 
 /* ====================================================================
@@ -158,6 +168,10 @@ const state = {
   call: false,
   inv: Array.from({ length: SLOTS }, () => null),
   sel: 0,
+  coins: 0,
+  stand: { normal: 0, premium: 0 },
+  missions: null,
+  acc: { dog: { owned: {}, on: {} }, cat: { owned: {}, on: {} } },
   waypoint: null,
   eatT: 0,
   dayF: 1,
@@ -371,6 +385,12 @@ const SFX = {
   },
   lap(sp) { noise({ dur: 0.06, vol: 0.1, f: 1600, q: 1, sp }); },
   splash(sp) { noise({ dur: 0.12, vol: 0.1, f: 1200, q: 0.8, sp }); },
+  coin(sp) {
+    tone({ type: 'square', f0: 1320, dur: 0.07, vol: 0.08, sp });
+    tone({ type: 'square', f0: 1760, dur: 0.12, vol: 0.08, at: 0.07, sp });
+  },
+  pour(sp) { noise({ dur: 0.5, vol: 0.12, f: 900, q: 0.6, sp }); },
+  skate(sp) { noise({ dur: 0.18, vol: 0.06, f: 3200, q: 0.5, sp }); },
   fire(sp) {
     noise({ dur: 0.35, vol: 0.18, f: 900, q: 0.5, sp });
     tone({ type: 'triangle', f0: 180, f1: 320, dur: 0.25, vol: 0.1, sp });
@@ -494,6 +514,22 @@ function buildMaterials(imgs) {
   mats.berryBush = new THREE.MeshLambertMaterial({ color: 0x2f6b2f });
   mats.berry = std(0x3b4fd6, { roughness: 0.35 });
   mats.pine = new THREE.MeshLambertMaterial({ color: 0xffffff });
+  mats.xmasTree = std(0x1f5e2e, { roughness: 0.9 });
+  mats.xmasStar = new THREE.MeshBasicMaterial({ color: 0xffe14d });
+  mats.pumpkin = std(0xf07f1a, { roughness: 0.6 });
+  mats.umbrella = std(0xffd54f, { roughness: 0.7, side: THREE.DoubleSide });
+  mats.glassLemonade = std(0xffe066, { roughness: 0.1, transparent: true, opacity: 0.75 });
+  mats.cup = std(0xfff176, { roughness: 0.4 });
+  mats.cupPremium = std(0xb39ddb, { roughness: 0.4 });
+  mats.signLemonade = std(0xffffff, { map: signTexture('LEMONADE', '#fff59d', '#e65100', '#ff8f00'), roughness: 0.8 });
+  mats.signMarket = std(0xffffff, { map: signTexture('Lemon Market', '#e3f2fd', '#0d47a1', '#1565c0'), roughness: 0.8 });
+  mats.marketWall = std(0xf2f2ee, { roughness: 0.9 });
+  mats.marketRoof = std(0x2e7dd1, { roughness: 0.7 });
+  mats.collar = std(0xd32f2f, { roughness: 0.5 });
+  mats.scarf = std(0x1e88e5, { roughness: 0.9 });
+  mats.partyHat = std(0xff5bb0, { roughness: 0.6 });
+  mats.terracotta = std(0xc1663b, { roughness: 0.9 });
+  mats.lanternGlow = new THREE.MeshBasicMaterial({ color: 0xffcc66 });
   mats.ground = std(0x5aa23a, { roughness: 1 });
   mats.trunk = new THREE.MeshLambertMaterial({ color: 0x7a5230 });
   mats.foliage = new THREE.MeshLambertMaterial({ color: 0xffffff });
@@ -671,6 +707,7 @@ function buildGeometry() {
   geo.rock = new THREE.DodecahedronGeometry(0.3, 0);
   geo.lily = new THREE.CircleGeometry(0.35, 10).rotateX(-Math.PI / 2);
   geo.cobble = new THREE.DodecahedronGeometry(1, 0);
+  geo.streak = new THREE.BoxGeometry(0.15, 0.15, 14);
 }
 
 /* ====================================================================
@@ -1270,7 +1307,7 @@ function buildFireflies() {
 }
 
 function updateFireflies(dt) {
-  const night = (1 - state.dayF) * (1 - state.rain * 0.8);
+  const night = (1 - state.dayF) * (1 - state.rain * 0.8) * (isWinter() ? 0 : 1);
   fireflies.visible = night > 0.05;
   if (!fireflies.visible) return;
   fireflies.material.opacity = night;
@@ -1393,13 +1430,13 @@ function buildChunk(cx, cz, key) {
     grass.setMatrixAt(i, dummy.matrix);
     if (stem) {
       col.setHSL(0.27 + r() * 0.03, 0.5, 0.36);
-      if (r() < 0.45 && dummy.scale.y > 0) heads.push({ x, y: sy, z });
+      if (r() < 0.45 && dummy.scale.y > 0 && season().flowers) heads.push({ x, y: sy, z });
     } else if (r() < 0.2) {
       col.setHSL(0.19 + r() * 0.04, 0.7, 0.45);
     } else {
       col.setHSL(0.27 + r() * 0.05, 0.55 + r() * 0.2, 0.28 + r() * 0.12);
     }
-    grass.setColorAt(i, col);
+    grass.setColorAt(i, seasonTint(col, 'grass'));
   }
   grass.instanceMatrix.needsUpdate = true;
   if (grass.instanceColor) grass.instanceColor.needsUpdate = true;
@@ -1430,7 +1467,7 @@ function buildChunk(cx, cz, key) {
     leaves.setMatrixAt(i, dummy.matrix);
     if (r() < 0.35) col.setHSL(0.14, 0.8, 0.6);
     else col.setHSL(0.24 + r() * 0.04, 0.6, 0.38);
-    leaves.setColorAt(i, col);
+    leaves.setColorAt(i, seasonTint(col, 'leaf'));
   }
   leaves.instanceMatrix.needsUpdate = true;
   if (leaves.instanceColor) leaves.instanceColor.needsUpdate = true;
@@ -1452,7 +1489,7 @@ function buildChunk(cx, cz, key) {
         dummy.scale.set(s * 1.2, s * 0.8, s * 1.2);
         dummy.updateMatrix();
         bushes.setMatrixAt(i, dummy.matrix);
-        bushes.setColorAt(i, col.setHSL(0.28 + r() * 0.06, 0.55, 0.26 + r() * 0.1));
+        bushes.setColorAt(i, seasonTint(col.setHSL(0.28 + r() * 0.06, 0.55, 0.26 + r() * 0.1), 'bush'));
       });
       bushes.instanceMatrix.needsUpdate = true;
       if (bushes.instanceColor) bushes.instanceColor.needsUpdate = true;
@@ -1487,7 +1524,7 @@ function buildChunk(cx, cz, key) {
         dummy.scale.setScalar((0.95 + r() * 0.35) * t.s);
         dummy.updateMatrix();
         folI.setMatrixAt(fi, dummy.matrix);
-        folI.setColorAt(fi, col.setHSL(0.31 + r() * 0.04, 0.5, 0.26 + r() * 0.08));
+        folI.setColorAt(fi, seasonTint(col.setHSL(0.31 + r() * 0.04, 0.5, 0.26 + r() * 0.08), 'foliage'));
         fi++;
       }
       for (let k = 0; k < 7; k++) {
@@ -1618,7 +1655,7 @@ function addForest(c, add, r, ox, oz) {
           dummy.scale.set(w, 0.75 * t.s, w);
           dummy.updateMatrix();
           cones.setMatrixAt(i * 2 + k, dummy.matrix);
-          cones.setColorAt(i * 2 + k, col.setHSL(0.36 + r() * 0.04, 0.45, 0.18 + r() * 0.08));
+          cones.setColorAt(i * 2 + k, seasonTint(col.setHSL(0.36 + r() * 0.04, 0.45, 0.18 + r() * 0.08), 'pine'));
         }
       });
       cones.instanceMatrix.needsUpdate = true;
@@ -1634,7 +1671,7 @@ function addForest(c, add, r, ox, oz) {
         dummy.scale.setScalar(1.3 * t.s);
         dummy.updateMatrix();
         crowns.setMatrixAt(i, dummy.matrix);
-        crowns.setColorAt(i, col.setHSL(0.27 + r() * 0.05, 0.5, 0.24 + r() * 0.08));
+        crowns.setColorAt(i, seasonTint(col.setHSL(0.27 + r() * 0.05, 0.5, 0.24 + r() * 0.08), 'foliage'));
       });
       crowns.instanceMatrix.needsUpdate = true;
       if (crowns.instanceColor) crowns.instanceColor.needsUpdate = true;
@@ -1703,6 +1740,7 @@ function collectBerries(rec) {
   SFX.pick(spatial(rec.x, rec.z));
   bubble(`+${got} 🫐`, rec.x, 1.2, rec.z, { size: 44, life: 1 });
   toast(`+${got} blueberries 🫐 (${countItem('blueberry')}/${BERRY_MAX})`);
+  missionEvent('berry', got);
 }
 
 /* ====================================================================
@@ -2484,6 +2522,10 @@ function updateTorches(dt) {
 
   lightSources.length = 0;
   for (const t of torches) lightSources.push({ x: t.x, y: 1.35, z: t.z, f: t.flicker || 1, d: Math.hypot(t.x - player.x, t.z - player.z) });
+  for (const d of decorItems) {
+    if (d.type === 'lantern') lightSources.push({ x: d.x, y: 1.5, z: d.z, f: 0.9, d: Math.hypot(d.x - player.x, d.z - player.z) });
+  }
+  if (isWinter()) lightSources.push({ x: XMAS.x, y: 1.6, z: XMAS.z, f: 0.7, d: Math.hypot(XMAS.x - player.x, XMAS.z - player.z) });
   if (holding && !state.sleeping) {
     const s = Math.sin(player.yaw);
     const c = Math.cos(player.yaw);
@@ -2759,6 +2801,7 @@ function updateAnimal(a, dt, t) {
       } else {
         toast(`${a.name} ate! Friendship up ${a.kind === 'dog' ? '🐶' : '🐱'}`);
       }
+      missionEvent('feed');
       if (a.plate && a.plate.food) a.state = 'plate';
     }
   } else if (a.state === 'play') {
@@ -2785,6 +2828,7 @@ function updateAnimal(a, dt, t) {
       a.home = { x: park.x, z: park.z, r: park.r * 0.8 };
       a.target = null;
       toast(`${a.name} is playing in the park! 🎾`);
+      missionEvent('park');
     } else {
       a.state = 'follow';
       const fx = Math.sin(player.yaw);
@@ -2829,7 +2873,7 @@ function updateAnimal(a, dt, t) {
     const pd = Math.hypot(player.x - a.x, player.z - a.z);
     if (pd < 4) a.yaw = angleLerp(a.yaw, Math.atan2(player.x - a.x, player.z - a.z), Math.min(1, dt * 4));
     if (a.timer <= 0) {
-      if (Math.random() < 0.3 && Math.abs(riverDist(a.x, a.z)) < 60) goDrink(a);
+      if (Math.random() < 0.3 && Math.abs(riverDist(a.x, a.z)) < 60 && !isWinter()) goDrink(a);
       else pickWander(a);
     }
   } else if (a.state === 'walk') {
@@ -2861,7 +2905,7 @@ function updateAnimal(a, dt, t) {
   const hop = (a.kind === 'dog' && a.happy > 0) || (a.state === 'play' && a.happy > 0);
   a.root.position.y = hop ? Math.abs(Math.sin(t * 9)) * 0.14 * a.cfg.scale : 0;
   if (onBridge(a.x, a.z)) a.root.position.y += 0.27;
-  else if (inRiver(a.x, a.z, -0.4)) a.root.position.y -= 0.12 * a.cfg.scale;
+  else if (inRiver(a.x, a.z, -0.4) && !isWinter()) a.root.position.y -= 0.12 * a.cfg.scale;
   const wantNeck = a.state === 'eat' || (a.state === 'drink' && a.drink.at) ? 0.95 : (a.sick ? 0.3 : 0) + Math.sin(t * 2 + a.x) * 0.04;
   a.neckX = lerp(a.neckX, wantNeck, Math.min(1, dt * 6));
   a.neck.rotation.x = a.neckX;
@@ -2879,6 +2923,7 @@ function petAnimal(a) {
   a.petCD = 0.45;
   a.happy = 1.8;
   state.pets++;
+  missionEvent('pet');
   if (a.gainCD <= 0) {
     a.friend = Math.min(100, a.friend + 4);
     a.gainCD = 2;
@@ -3181,15 +3226,18 @@ function updateRain(dt) {
   const n = Math.round(RAIN_N * state.rain);
   rainMesh.count = n;
   if (n === 0) return;
+  const snow = isWinter();
   for (let i = 0; i < n; i++) {
     const d = rainDrops[i];
-    d.y -= d.sp * dt;
+    d.y -= d.sp * dt * (snow ? 0.12 : 1);
+    if (snow) d.x += Math.sin(T * 1.3 + i) * dt * 0.6;
     if (d.y < 0) d.y += 18;
     d.x = wrapNear(d.x, player.x, 16);
     d.z = wrapNear(d.z, player.z, 16);
     dummy.position.set(d.x, d.y, d.z);
     dummy.rotation.set(0.08, 0, 0.12);
-    dummy.scale.set(1, 1, 1);
+    if (snow) dummy.scale.set(3.5, 0.1, 3.5);
+    else dummy.scale.set(1, 1, 1);
     dummy.updateMatrix();
     rainMesh.setMatrixAt(i, dummy.matrix);
   }
@@ -3256,7 +3304,7 @@ function updateBubbles(dt) {
 /* ====================================================================
    Player: a lemon with a face
    ==================================================================== */
-const player = { x: SPAWN.x, z: SPAWN.z, yaw: Math.PI, group: null, body: null, hand: {}, eatLemon: null, walkT: 0, stepT: 0, blob: null };
+const player = { x: SPAWN.x, z: SPAWN.z, yaw: Math.PI, group: null, body: null, hand: {}, eatLemon: null, walkT: 0, stepT: 0, blob: null, vx: 0, vz: 0 };
 const HAND_POS = new THREE.Vector3(0.3, 0.3, 0.2);
 const MOUTH_POS = new THREE.Vector3(0, 0.46, 0.34);
 
@@ -3422,27 +3470,34 @@ function updatePlayer(dt) {
 
   const moving = (mx !== 0 || mz !== 0) && !state.sleeping;
   let sprinting = false;
+  const inWater = inRiver(player.x, player.z) && !onBridge(player.x, player.z);
+  const onIce = inWater && isWinter();
+  let speed = 0;
   if (moving) {
     sprinting = (state.sprintKey || state.sprintBtn) && state.stamina > 4 && state.hunger > 0;
-    let speed = WALK_SPEED;
+    speed = WALK_SPEED;
     if (sprinting) {
       speed = SPRINT_SPEED;
       state.stamina = Math.max(0, state.stamina - STAMINA_DRAIN * dt);
       state.sprintCD = 0.8;
     }
     if (state.hunger <= 0) speed *= 0.7;
-    const wading = inRiver(player.x, player.z) && !onBridge(player.x, player.z);
-    if (wading) speed *= 0.55;
-    player.x += mx * speed * dt;
-    player.z += mz * speed * dt;
+    if (inWater) speed *= onIce ? 1.3 : 0.55;
     player.yaw = angleLerp(player.yaw, Math.atan2(mx, mz), Math.min(1, dt * 10));
     player.walkT += dt * (sprinting ? 17 : 11);
     player.stepT -= dt;
     if (player.stepT <= 0 && actx) {
       player.stepT = sprinting ? 0.3 : 0.42;
-      (wading ? SFX.splash : SFX.step)(spatial(player.x, player.z));
+      const sound = onIce ? SFX.skate : inWater ? SFX.splash : SFX.step;
+      sound(spatial(player.x, player.z));
     }
   }
+  // on ice the lemon keeps sliding for a moment
+  const k = onIce ? Math.min(1, dt * 1.6) : 1;
+  player.vx += (mx * speed - player.vx) * k;
+  player.vz += (mz * speed - player.vz) * k;
+  player.x += player.vx * dt;
+  player.z += player.vz * dt;
   if (!sprinting) {
     state.sprintCD = Math.max(0, state.sprintCD - dt);
     if (state.sprintCD <= 0) state.stamina = Math.min(100, state.stamina + STAMINA_REGEN * dt);
@@ -3459,7 +3514,7 @@ function updatePlayer(dt) {
     }
   }
 
-  const lift = onBridge(player.x, player.z) ? 0.27 : inRiver(player.x, player.z, -0.4) ? -0.14 : 0;
+  const lift = onBridge(player.x, player.z) ? 0.27 : inRiver(player.x, player.z, -0.4) ? (isWinter() ? 0.04 : -0.14) : 0;
   player.group.position.set(player.x, lift, player.z);
   player.group.rotation.y = player.yaw;
   player.body.position.y = 0.42 + (moving ? Math.abs(Math.sin(player.walkT)) * 0.05 : 0);
@@ -3567,6 +3622,17 @@ function useSelected() {
     placeTorch(player.x + s * 1.2, player.z + c * 1.2);
   } else if (t === 'food') {
     toast(`Tap ${animals.dog.name}'s plate to serve the food.`);
+  } else if (t === 'rod') {
+    if (Math.abs(riverDist(player.x, player.z)) < 3) goFish(player.x, player.z);
+    else toast('Go to the river and tap the water to fish.');
+  } else if (DECOR[t]) {
+    const s = Math.sin(player.yaw);
+    const c = Math.cos(player.yaw);
+    placeDecor(t, player.x + s * 1.3, player.z + c * 1.3);
+  } else if (t === 'fish') {
+    toast('Serve fish on a plate, or sell it at the Lemon Market.');
+  } else if (t === 'goldfish') {
+    toast('Sell the golden fish at the Lemon Market for 20 🪙.');
   } else if (t === 'blueberry') {
     toast('Put blueberries on a plate: the next vet check-up moves one day later.');
   } else {
@@ -3609,9 +3675,13 @@ function placeFood(p) {
   // Pet food or blueberries: the selected slot wins, then pet food, then blueberries.
   const type = p.who === 'dog' ? 'food' : 'catfood';
   const sel = selectedType();
-  let item = sel === type || sel === 'blueberry' ? sel : null;
+  let item = sel === type || sel === 'fish' || sel === 'blueberry' ? sel : null;
   let idx = item ? state.sel : state.inv.findIndex((s) => s && s.type === type);
   if (idx >= 0 && !item) item = type;
+  if (idx < 0) {
+    idx = state.inv.findIndex((s) => s && s.type === 'fish');
+    if (idx >= 0) item = 'fish';
+  }
   if (idx < 0) {
     idx = state.inv.findIndex((s) => s && s.type === 'blueberry');
     if (idx >= 0) item = 'blueberry';
@@ -3658,6 +3728,7 @@ function collectLemon(rec) {
   SFX.ding(spatial(rec.x, rec.z));
   bubble('+1 🍋', rec.x, 0.9, rec.z, { size: 44, life: 1 });
   toast('+1 lemon 🍋');
+  missionEvent('lemon');
 }
 
 function tryBed() {
@@ -3793,6 +3864,11 @@ function executeGoal(g) {
     case 'torch': pickupTorch(g.ref); break;
     case 'vet': visitVet(g.ref); break;
     case 'placeTorch': placeTorch(g.x, g.z); break;
+    case 'stand': openStand(); break;
+    case 'market': openMarket(); break;
+    case 'decor': pickupDecor(g.ref); break;
+    case 'placeDecor': placeDecor(g.type, g.x, g.z); break;
+    case 'fish': castLine(g.cast.x, g.cast.z); break;
     case 'waypoint':
       clearWaypoint();
       SFX.chime();
@@ -4037,6 +4113,894 @@ function updateMaps(dt) {
 }
 
 /* ====================================================================
+   Seasons: spring, summer, autumn and winter (4 days each)
+   ==================================================================== */
+const DAYS_PER_SEASON = 4;
+const SEASONS = [
+  { id: 'spring', name: 'Spring', icon: '🌸', ground: 0x5aa23a, petal: 0xffb8d6, flowers: true },
+  { id: 'summer', name: 'Summer', icon: '☀️', ground: 0x66a836, petal: 0xfff3b0, flowers: true },
+  { id: 'autumn', name: 'Autumn', icon: '🍂', ground: 0x8c8a3a, petal: 0xf08a24, flowers: false },
+  { id: 'winter', name: 'Winter', icon: '❄️', ground: 0xdde8ee, petal: 0xffffff, flowers: false },
+];
+const XMAS = { x: -3.6, z: -4.8 };
+const seasonProps = { spring: null, summer: null, autumn: null, winter: null };
+const xmasLights = [];
+const shootingStars = [];
+let seasonNow = -1;
+let starShowerT = 3;
+let starToastDay = 0;
+
+function seasonIndex() {
+  return Math.floor((state.day - 1) / DAYS_PER_SEASON) % 4;
+}
+function season() {
+  return SEASONS[seasonNow < 0 ? seasonIndex() : seasonNow];
+}
+function isWinter() {
+  return season().id === 'winter';
+}
+
+// Turns a spring colour into the colour for the current season.
+const tintHSL = {};
+function seasonTint(col, kind) {
+  const id = season().id;
+  if (id === 'spring') return col;
+  col.getHSL(tintHSL);
+  let { h, s, l } = tintHSL;
+  if (id === 'summer') {
+    if (kind !== 'pine') {
+      h -= 0.015;
+      l += 0.03;
+    }
+  } else if (id === 'autumn') {
+    const v = (l * 37) % 1;
+    if (kind === 'grass') {
+      h = 0.1 + v * 0.06;
+      s = 0.5;
+      l = Math.min(0.55, l + 0.08);
+    } else if (kind === 'pine') {
+      l -= 0.02;
+    } else {
+      h = 0.02 + v * 0.1;
+      s = 0.75;
+      l = 0.38 + v * 0.12;
+    }
+  } else if (kind === 'pine') {
+    s *= 0.6;
+    l = Math.min(0.5, l + 0.1);
+  } else if (kind === 'grass') {
+    s *= 0.15;
+    l = 0.75 + (l - 0.3) * 0.4;
+  } else {
+    s *= 0.2;
+    l = 0.8;
+  }
+  return col.setHSL(h, clamp(s, 0, 1), clamp(l, 0, 1));
+}
+
+function seasonLeafColor(col) {
+  const id = season().id;
+  if (id === 'autumn') return col.setHSL(rnd(0, 0.12), 0.8, rnd(0.4, 0.55));
+  if (id === 'winter') return col.setHSL(0.6, 0.15, rnd(0.88, 0.97));
+  return col.setHSL(rnd(0.12, 0.3), 0.6, rnd(0.4, 0.6));
+}
+
+// Applies the season for the current day. Returns true when it changed.
+function applySeason(rebuild = true) {
+  const i = seasonIndex();
+  if (i === seasonNow) return false;
+  const first = seasonNow < 0;
+  seasonNow = i;
+  const S = SEASONS[i];
+  const winter = S.id === 'winter';
+  mats.ground.color.setHex(S.ground);
+  mats.petal.color.setHex(S.petal);
+  const col = new THREE.Color();
+  for (let k = 0; k < leafMesh.count; k++) leafMesh.setColorAt(k, seasonLeafColor(col));
+  if (leafMesh.instanceColor) leafMesh.instanceColor.needsUpdate = true;
+  // the river freezes in winter
+  mats.water.color.setHex(winter ? 0xd8eef8 : 0x3f97d6);
+  mats.water.opacity = winter ? 0.97 : 0.9;
+  mats.water.roughness = winter ? 0.05 : 0.15;
+  mats.water.map = winter ? null : river.tex;
+  mats.water.needsUpdate = true;
+  rainMesh.material.color.setHex(winter ? 0xffffff : 0xcfe6ff);
+  rainMesh.material.opacity = winter ? 0.9 : 0.5;
+  for (const [id, g] of Object.entries(seasonProps)) if (g) g.visible = id === S.id;
+  if (winter && fishing.active) stopFishing();
+  if (!first) {
+    if (rebuild) {
+      for (const c of chunks.values()) disposeChunk(c);
+      chunks.clear();
+      updateChunks(true);
+    }
+    SFX.chime();
+    const extra = {
+      spring: ' Flowers are back.',
+      summer: ' Watch the stars at night.',
+      autumn: ' Autumn fair: lemonade sells for more!',
+      winter: ' The river is frozen: time to skate!',
+    }[S.id];
+    toast(`${S.icon} ${S.name} has arrived!${extra}`);
+  }
+  return true;
+}
+
+function buildSeasonProps() {
+  // winter: a Christmas tree with lights and presents next to Capi's house
+  const w = new THREE.Group();
+  w.position.set(XMAS.x, 0, XMAS.z);
+  const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.16, 0.5, 8), mats.trunk);
+  trunk.position.y = 0.25;
+  w.add(trunk);
+  for (let k = 0; k < 3; k++) {
+    const cone = new THREE.Mesh(new THREE.ConeGeometry(1.1 - k * 0.3, 1.1, 10), mats.xmasTree);
+    cone.position.y = 0.9 + k * 0.65;
+    w.add(cone);
+  }
+  const star = new THREE.Mesh(new THREE.OctahedronGeometry(0.18, 0), mats.xmasStar);
+  star.position.y = 2.75;
+  w.add(star);
+  const bulbColors = [0xff3b3b, 0xffd23b, 0x3b8bff, 0x4cff6a, 0xff5bd6];
+  for (let i = 0; i < 22; i++) {
+    const h = rnd(0.5, 2.4);
+    const radius = (1 - (h - 0.4) / 2.3) * 1.0 + 0.05;
+    const a = rnd(0, TAU);
+    const bulb = new THREE.Mesh(geo.smallSphere, new THREE.MeshBasicMaterial({ color: bulbColors[i % bulbColors.length] }));
+    bulb.scale.setScalar(0.05);
+    bulb.position.set(Math.cos(a) * radius, h, Math.sin(a) * radius);
+    w.add(bulb);
+    xmasLights.push({ mesh: bulb, ph: rnd(0, TAU) });
+  }
+  const giftMats = [mats.red, mats.blue, mats.yellow];
+  [[0.8, 0.5], [-0.7, 0.7], [0.2, 0.95]].forEach(([x, z], i) => {
+    const gift = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.3, 0.4), giftMats[i]);
+    gift.position.set(x, 0.15, z);
+    gift.rotation.y = rnd(0, 1);
+    w.add(gift);
+  });
+  shadowAll(w);
+  w.visible = false;
+  scene.add(w);
+  seasonProps.winter = w;
+
+  // autumn: fair with pumpkins and bunting by the lemonade stand
+  const a = new THREE.Group();
+  for (const [x, z] of [[STAND.x - 1.6, STAND.z + 1.4], [STAND.x + 2.1, STAND.z + 0.6], [-4.4, 0.9], [-7.2, -0.6], [STAND.x + 1.2, STAND.z + 2.4], [XMAS.x + 0.6, XMAS.z + 0.4]]) {
+    const p = new THREE.Mesh(geo.smallSphere, mats.pumpkin);
+    p.scale.set(0.36, 0.27, 0.36);
+    p.position.set(x, 0.25, z);
+    const stem = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.04, 0.12, 6), mats.lemonLeaf);
+    stem.position.set(x, 0.55, z);
+    a.add(p, stem);
+  }
+  for (const x of [-2.4, 2.4]) {
+    const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 2.6, 6), mats.darkWood);
+    pole.position.set(STAND.x + x, 1.3, STAND.z + 0.9);
+    a.add(pole);
+  }
+  const flagMats = [mats.red, mats.yellow, mats.blue, mats.pumpkin];
+  for (let i = 0; i < 9; i++) {
+    const t = i / 8;
+    const flag = new THREE.Mesh(new THREE.ConeGeometry(0.13, 0.28, 3), flagMats[i % flagMats.length]);
+    flag.rotation.x = Math.PI;
+    flag.position.set(STAND.x - 2.3 + t * 4.6, 2.4 - Math.sin(t * Math.PI) * 0.35, STAND.z + 0.9);
+    a.add(flag);
+  }
+  shadowAll(a);
+  a.visible = false;
+  scene.add(a);
+  seasonProps.autumn = a;
+}
+
+function spawnShootingStar() {
+  const m = new THREE.Mesh(geo.streak, new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 1, fog: false, depthWrite: false }));
+  const a = rnd(0, TAU);
+  const start = new THREE.Vector3(camera.position.x + Math.cos(a) * 320, rnd(170, 260), camera.position.z + Math.sin(a) * 320);
+  const v = new THREE.Vector3(rnd(-1, 1), -0.35, rnd(-1, 1)).normalize().multiplyScalar(rnd(140, 220));
+  m.position.copy(start);
+  m.lookAt(start.clone().add(v));
+  m.renderOrder = -5;
+  scene.add(m);
+  shootingStars.push({ mesh: m, v, t: 0, life: rnd(0.6, 1.1) });
+}
+
+function updateSeasonal(dt) {
+  const id = season().id;
+  if (id === 'winter') {
+    for (const b of xmasLights) b.mesh.visible = Math.sin(T * 3 + b.ph) > -0.3;
+  }
+  const night = 1 - state.dayF;
+  if (id === 'summer' && night > 0.6 && state.rain < 0.3) {
+    if (starToastDay !== state.day) {
+      starToastDay = state.day;
+      toast('🌠 Star shower tonight! Look up.');
+    }
+    starShowerT -= dt;
+    if (starShowerT <= 0) {
+      starShowerT = rnd(1.2, 3.5);
+      spawnShootingStar();
+    }
+  }
+  for (let i = shootingStars.length - 1; i >= 0; i--) {
+    const s = shootingStars[i];
+    s.t += dt;
+    s.mesh.position.addScaledVector(s.v, dt);
+    s.mesh.material.opacity = clamp(1 - s.t / s.life, 0, 1);
+    if (s.t >= s.life) {
+      scene.remove(s.mesh);
+      s.mesh.material.dispose();
+      shootingStars.splice(i, 1);
+    }
+  }
+}
+
+/* ====================================================================
+   Economy: coins, lemonade stand with visitors, Lemon Market, missions
+   ==================================================================== */
+const STAND = { x: 1.5, z: -6 };
+const MARKET = { x: 3.5, z: -11.5 };
+const STAND_REF = { x: STAND.x, z: STAND.z };
+const MARKET_REF = { x: MARKET.x, z: MARKET.z };
+const STAND_MAX = 10;
+const LEMONADE_PRICE = 5;
+const PREMIUM_PRICE = 9;
+const FAIR_BONUS = 2;
+const ROD_PRICE = 15;
+const SELL_PRICES = { fish: 4, goldfish: 20 };
+const ACCESSORIES = [
+  { id: 'collar', icon: '📿', name: 'Collar', price: 10 },
+  { id: 'hat', icon: '🎉', name: 'Party hat', price: 15 },
+  { id: 'scarf', icon: '🧣', name: 'Scarf', price: 12 },
+];
+const DECOR = {
+  flowerpot: { price: 6, desc: 'Colourful flowers in a pot.' },
+  lantern: { price: 10, desc: 'Glows warmly at night.' },
+  bench: { price: 14, desc: 'A wooden bench to sit on.' },
+  fence: { price: 4, desc: 'A piece of garden fence.' },
+};
+const stand = { cups: [], visitors: [], spawnT: 8 };
+
+function lemonadePrice(premium) {
+  return (premium ? PREMIUM_PRICE : LEMONADE_PRICE) + (season().id === 'autumn' ? FAIR_BONUS : 0);
+}
+function standStock() {
+  return state.stand.normal + state.stand.premium;
+}
+
+function buildStand() {
+  const g = new THREE.Group();
+  g.position.set(STAND.x, 0, STAND.z);
+  scene.add(g);
+  const table = new THREE.Mesh(new THREE.BoxGeometry(1.8, 0.85, 0.8), mats.wood);
+  table.position.y = 0.425;
+  g.add(pickable(table, 'stand', STAND_REF));
+  const sign = new THREE.Mesh(new THREE.PlaneGeometry(1.6, 0.4), mats.signLemonade);
+  sign.position.set(0, 0.5, 0.41);
+  g.add(pickable(sign, 'stand', STAND_REF));
+  const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 2.4, 6), mats.darkWood);
+  pole.position.set(0, 1.2, -0.2);
+  g.add(pole);
+  const canopy = new THREE.Mesh(new THREE.ConeGeometry(1.4, 0.55, 12), mats.umbrella);
+  canopy.position.set(0, 2.45, -0.2);
+  g.add(canopy);
+  const jug = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 0.32, 12), mats.glassLemonade);
+  jug.position.set(-0.6, 1.01, 0);
+  g.add(jug);
+  for (let i = 0; i < 6; i++) {
+    const cup = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.05, 0.14, 10), mats.cup);
+    cup.position.set(-0.25 + (i % 3) * 0.28, 0.92, -0.12 + Math.floor(i / 3) * 0.24);
+    cup.visible = false;
+    g.add(cup);
+    stand.cups.push(cup);
+  }
+  shadowAll(g);
+  obstacles.push({ x: STAND.x, z: STAND.z, r: 1.1, ck: 'static' });
+  addPoi({ type: 'shop', x: STAND.x, z: STAND.z, icon: '🥤', label: 'Lemonade stand', clear: 6 });
+}
+
+function renderStandCups() {
+  stand.cups.forEach((c, i) => {
+    c.visible = i < Math.min(stand.cups.length, standStock());
+    c.material = i < state.stand.premium ? mats.cupPremium : mats.cup;
+  });
+}
+
+function openStand() {
+  $('standMsg').textContent = '';
+  renderStand();
+  $('standOverlay').classList.remove('hidden');
+}
+function renderStand() {
+  $('standStock').textContent = `In stock: 🥤 ${state.stand.normal} · 💜 ${state.stand.premium} (max ${STAND_MAX}) · You have 🍋 ${countItem('lemon')} · 🫐 ${countItem('blueberry')}`;
+  $('priceNormal').textContent = lemonadePrice(false);
+  $('pricePremium').textContent = lemonadePrice(true);
+  $('fairNote').classList.toggle('hidden', season().id !== 'autumn');
+}
+
+function makeLemonade(premium) {
+  const msg = $('standMsg');
+  if (standStock() >= STAND_MAX) {
+    msg.textContent = `The stand is full (${STAND_MAX} drinks).`;
+    return;
+  }
+  if (countItem('lemon') < 2) {
+    msg.textContent = 'You need 2 lemons.';
+    return;
+  }
+  if (premium && countItem('blueberry') < 1) {
+    msg.textContent = 'You need 1 blueberry too.';
+    return;
+  }
+  takeItems('lemon', 2);
+  if (premium) {
+    takeItems('blueberry', 1);
+    state.stand.premium++;
+  } else {
+    state.stand.normal++;
+  }
+  msg.textContent = '';
+  SFX.pour(spatial(STAND.x, STAND.z));
+  renderStand();
+  renderStandCups();
+  toast(premium ? 'Blueberry lemonade ready! 💜' : 'Lemonade ready! 🥤 Visitors will come to buy it.');
+}
+
+/* ---------- visitors who buy lemonade ---------- */
+function buildVisitor() {
+  const g = new THREE.Group();
+  scene.add(g);
+  const body = new THREE.Mesh(geo.lemon, mats.lemon);
+  body.scale.setScalar(0.7);
+  body.position.y = 0.36;
+  g.add(body);
+  for (const sx of [-1, 1]) {
+    const w = new THREE.Mesh(geo.smallSphere, new THREE.MeshBasicMaterial({ color: 0xffffff }));
+    w.scale.setScalar(0.055);
+    w.position.set(sx * 0.09, 0.43, 0.21);
+    const p = new THREE.Mesh(geo.smallSphere, new THREE.MeshBasicMaterial({ color: 0x1a1a1a }));
+    p.scale.setScalar(0.028);
+    p.position.set(sx * 0.09, 0.43, 0.26);
+    g.add(w, p);
+  }
+  const hatMat = new THREE.MeshStandardMaterial({ color: new THREE.Color().setHSL(rnd(0, 1), 0.6, 0.5), roughness: 0.7 });
+  const hat = Math.random() < 0.5
+    ? new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.14, 0.16, 12), hatMat)
+    : new THREE.Mesh(new THREE.ConeGeometry(0.13, 0.26, 12), hatMat);
+  hat.position.y = 0.78;
+  const brim = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.22, 0.02, 14), hatMat);
+  brim.position.y = 0.7;
+  g.add(hat, brim);
+  shadowAll(g);
+  return { group: g, blob: makeBlob(0.7), x: 0, z: 0, yaw: 0, moving: false, mode: 'in', wait: 0, ph: rnd(0, TAU) };
+}
+
+function spawnVisitor() {
+  const v = buildVisitor();
+  const idx = stand.visitors.length;
+  v.spot = { x: STAND.x + (idx ? 0.75 : -0.65), z: STAND.z + 1.5 };
+  v.exit = { x: STAND.x + rnd(-20, 20), z: STAND.z + rnd(14, 22) };
+  v.x = v.exit.x;
+  v.z = v.exit.z;
+  stand.visitors.push(v);
+}
+
+function sellTo(v) {
+  if (!standStock()) {
+    bubble('😢', v.x, 1.2, v.z, { size: 56, bg: false, life: 1.2 });
+    return;
+  }
+  const premium = state.stand.premium > 0 && (state.stand.normal === 0 || Math.random() < 0.5);
+  if (premium) state.stand.premium--;
+  else state.stand.normal--;
+  const price = lemonadePrice(premium);
+  state.coins += price;
+  SFX.coin(spatial(v.x, v.z));
+  bubble(`+${price} 🪙`, v.x, 1.3, v.z, { size: 44, life: 1.3 });
+  missionEvent('sell');
+  renderStandCups();
+  if (!$('standOverlay').classList.contains('hidden')) renderStand();
+}
+
+function updateVisitors(dt) {
+  const daytime = state.tod >= 7 && state.tod < 20;
+  stand.spawnT -= dt;
+  if (stand.spawnT <= 0) {
+    stand.spawnT = rnd(18, 35) * (state.rain > 0.5 ? 1.6 : 1);
+    if (daytime && standStock() > 0 && stand.visitors.length < 2 && !state.sleeping) spawnVisitor();
+  }
+  for (let i = stand.visitors.length - 1; i >= 0; i--) {
+    const v = stand.visitors[i];
+    v.moving = false;
+    if (v.mode === 'in') {
+      if (stepTo(v, v.spot.x, v.spot.z, 2.2, dt, 0.1)) {
+        v.mode = 'wait';
+        v.wait = 2;
+      }
+    } else if (v.mode === 'wait') {
+      v.yaw = angleLerp(v.yaw, Math.atan2(STAND.x - v.x, STAND.z - v.z), Math.min(1, dt * 5));
+      v.wait -= dt;
+      if (v.wait <= 0) {
+        sellTo(v);
+        v.mode = 'out';
+      }
+    } else if (stepTo(v, v.exit.x, v.exit.z, 2.2, dt, 0.2)) {
+      scene.remove(v.group);
+      scene.remove(v.blob);
+      stand.visitors.splice(i, 1);
+      continue;
+    }
+    v.group.position.set(v.x, v.moving ? Math.abs(Math.sin(T * 11 + v.ph)) * 0.06 : 0, v.z);
+    v.group.rotation.y = v.yaw;
+    v.blob.position.set(v.x, 0.01, v.z);
+  }
+}
+
+/* ---------- Lemon Market ---------- */
+let marketTab = 'pets';
+let marketPet = 'dog';
+
+function buildMarket() {
+  buildShop({ pos: MARKET, rot: 0, wall: mats.marketWall, roof: mats.marketRoof, sign: mats.signMarket, kind: 'market', ref: MARKET_REF, icon: '🏪', label: 'Lemon Market' });
+  obstacles.push({ x: MARKET.x, z: MARKET.z, r: 1.9, ck: 'static' });
+}
+
+function openMarket() {
+  $('mkMsg').textContent = '';
+  renderMarket();
+  $('marketOverlay').classList.remove('hidden');
+}
+
+function marketRow(icon, title, sub, btnText, onClick, disabled = false) {
+  const row = document.createElement('div');
+  row.className = 'shop-item';
+  const text = document.createElement('div');
+  text.className = 'shop-text';
+  const b = document.createElement('b');
+  b.textContent = `${icon} ${title}`;
+  const small = document.createElement('small');
+  small.textContent = sub;
+  text.append(b, small);
+  const btn = document.createElement('button');
+  btn.className = 'primary';
+  btn.type = 'button';
+  btn.textContent = btnText;
+  btn.disabled = disabled;
+  btn.addEventListener('click', onClick);
+  row.append(text, btn);
+  return row;
+}
+
+function renderMarket() {
+  $('mkCoins').textContent = state.coins;
+  document.querySelectorAll('#marketOverlay .tabs button').forEach((b) => b.classList.toggle('sel', b.dataset.tab === marketTab));
+  const body = $('mkBody');
+  body.textContent = '';
+  if (marketTab === 'pets') {
+    const pets = document.createElement('div');
+    pets.className = 'shop-pets';
+    for (const kind of ['dog', 'cat']) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = `secondary${marketPet === kind ? ' sel' : ''}`;
+      b.textContent = `${kind === 'dog' ? '🐶' : '🐱'} ${animals[kind].name}`;
+      b.addEventListener('click', () => {
+        marketPet = kind;
+        renderMarket();
+      });
+      pets.append(b);
+    }
+    body.append(pets);
+    const acc = state.acc[marketPet];
+    for (const item of ACCESSORIES) {
+      if (!acc.owned[item.id]) {
+        body.append(marketRow(item.icon, item.name, `${item.price} 🪙`, 'Buy', () => buyAccessory(item)));
+      } else {
+        const on = !!acc.on[item.id];
+        body.append(marketRow(item.icon, item.name, on ? 'Wearing it' : 'Owned', on ? 'Take off' : 'Wear', () => toggleAccessory(item.id)));
+      }
+    }
+  } else if (marketTab === 'garden') {
+    for (const [type, d] of Object.entries(DECOR)) {
+      body.append(marketRow(ITEMS[type].icon, ITEMS[type].name, `${d.desc} ${d.price} 🪙`, 'Buy', () => buyDecor(type)));
+    }
+    const note = document.createElement('p');
+    note.className = 'md-note';
+    note.textContent = 'Select it in your inventory and tap the ground to place it. Tap it again to pick it up.';
+    body.append(note);
+  } else if (marketTab === 'tools') {
+    const has = countItem('rod') > 0;
+    body.append(marketRow('🎣', 'Fishing rod', has ? 'You have one.' : `Fish in the river. ${ROD_PRICE} 🪙`, has ? 'Owned' : 'Buy', buyRod, has));
+  } else {
+    for (const type of ['fish', 'goldfish']) {
+      const n = countItem(type);
+      body.append(marketRow(ITEMS[type].icon, ITEMS[type].name, `You have ${n}. ${SELL_PRICES[type]} 🪙 each.`, 'Sell all', () => sellAll(type), n === 0));
+    }
+  }
+}
+
+function spend(price) {
+  if (state.coins < price) {
+    $('mkMsg').textContent = `You need ${price} 🪙. You have ${state.coins}.`;
+    return false;
+  }
+  state.coins -= price;
+  $('mkMsg').textContent = '';
+  SFX.coin();
+  return true;
+}
+
+function buyAccessory(item) {
+  if (!spend(item.price)) return;
+  const acc = state.acc[marketPet];
+  acc.owned[item.id] = true;
+  acc.on[item.id] = true;
+  applyAccessories();
+  renderMarket();
+  toast(`${animals[marketPet].name} got a ${item.name.toLowerCase()}! ${item.icon}`);
+}
+
+function toggleAccessory(id) {
+  const acc = state.acc[marketPet];
+  acc.on[id] = !acc.on[id];
+  applyAccessories();
+  renderMarket();
+}
+
+function buyDecor(type) {
+  if (countItem(type) === 0 && !state.inv.some((s) => !s)) {
+    $('mkMsg').textContent = 'Your inventory is full.';
+    return;
+  }
+  if (!spend(DECOR[type].price)) return;
+  addItem(type, 1);
+  renderMarket();
+  toast(`${ITEMS[type].icon} ${ITEMS[type].name} bought. Select it and tap the ground to place it.`);
+}
+
+function buyRod() {
+  if (countItem('rod') > 0) return;
+  if (!state.inv.some((s) => !s)) {
+    $('mkMsg').textContent = 'Your inventory is full.';
+    return;
+  }
+  if (!spend(ROD_PRICE)) return;
+  addItem('rod', 1);
+  renderMarket();
+  toast('🎣 Fishing rod bought! Select it and tap the river to fish.');
+}
+
+function sellAll(type) {
+  const n = countItem(type);
+  if (!n) return;
+  takeItems(type, n);
+  const earned = n * SELL_PRICES[type];
+  state.coins += earned;
+  SFX.coin();
+  renderMarket();
+  toast(`Sold ${n} ${ITEMS[type].name.toLowerCase()} for ${earned} 🪙`);
+}
+
+/* ---------- pet accessories ---------- */
+function accessoryMeshes(a) {
+  if (a.accMeshes) return a.accMeshes;
+  const collar = new THREE.Mesh(new THREE.TorusGeometry(0.19, 0.03, 8, 22), mats.collar);
+  collar.rotation.x = Math.PI / 2;
+  collar.position.set(0, 0.02, 0.03);
+  const scarf = new THREE.Mesh(new THREE.TorusGeometry(0.21, 0.06, 8, 22), mats.scarf);
+  scarf.rotation.x = Math.PI / 2;
+  scarf.position.set(0, -0.06, 0.04);
+  a.neck.add(collar, scarf);
+  const hat = new THREE.Group();
+  const cone = new THREE.Mesh(new THREE.ConeGeometry(0.09, 0.26, 16), mats.partyHat);
+  cone.position.y = 0.13;
+  const pom = new THREE.Mesh(geo.smallSphere, mats.yellow);
+  pom.scale.setScalar(0.035);
+  pom.position.y = 0.27;
+  hat.add(cone, pom);
+  hat.position.set(0.04, 0.2, 0);
+  hat.rotation.z = -0.25;
+  a.head.add(hat);
+  a.accMeshes = { collar, hat, scarf };
+  shadowAll(a.root);
+  return a.accMeshes;
+}
+
+function applyAccessories() {
+  for (const a of animalList) {
+    const on = state.acc[a.kind].on;
+    const m = accessoryMeshes(a);
+    for (const id of Object.keys(m)) m[id].visible = !!on[id];
+  }
+}
+
+/* ---------- garden decorations ---------- */
+const decorItems = [];
+
+function buildDecorMesh(type) {
+  const g = new THREE.Group();
+  if (type === 'flowerpot') {
+    const pot = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.16, 0.3, 12), mats.terracotta);
+    pot.position.y = 0.15;
+    g.add(pot);
+    for (let i = 0; i < 5; i++) {
+      const a = (i / 5) * TAU;
+      const f = new THREE.Mesh(geo.smallSphere, new THREE.MeshStandardMaterial({ color: FLOWER_COLORS[i % FLOWER_COLORS.length], roughness: 0.7 }));
+      f.scale.setScalar(0.08);
+      f.position.set(Math.cos(a) * 0.1, 0.42 + (i % 2) * 0.06, Math.sin(a) * 0.1);
+      g.add(f);
+    }
+    const leaves = new THREE.Mesh(geo.smallSphere, mats.berryBush);
+    leaves.scale.set(0.18, 0.1, 0.18);
+    leaves.position.y = 0.33;
+    g.add(leaves);
+  } else if (type === 'lantern') {
+    const post = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.05, 1.4, 6), mats.darkWood);
+    post.position.y = 0.7;
+    const lamp = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.28, 0.22), mats.lanternGlow);
+    lamp.position.y = 1.52;
+    const cap = new THREE.Mesh(new THREE.ConeGeometry(0.2, 0.15, 4), mats.darkWood);
+    cap.rotation.y = Math.PI / 4;
+    cap.position.y = 1.74;
+    g.add(post, lamp, cap);
+  } else if (type === 'bench') {
+    const seat = new THREE.Mesh(new THREE.BoxGeometry(1.4, 0.08, 0.45), mats.wood);
+    seat.position.y = 0.45;
+    const back = new THREE.Mesh(new THREE.BoxGeometry(1.4, 0.4, 0.06), mats.wood);
+    back.position.set(0, 0.75, -0.2);
+    g.add(seat, back);
+    for (const x of [-0.6, 0.6]) {
+      for (const z of [-0.17, 0.17]) {
+        const leg = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.45, 0.07), mats.darkWood);
+        leg.position.set(x, 0.22, z);
+        g.add(leg);
+      }
+    }
+  } else {
+    for (const x of [-0.8, 0.8]) {
+      const post = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.9, 0.1), mats.fence);
+      post.position.set(x, 0.45, 0);
+      g.add(post);
+    }
+    for (const y of [0.35, 0.7]) {
+      const rail = new THREE.Mesh(new THREE.BoxGeometry(1.7, 0.08, 0.05), mats.fence);
+      rail.position.y = y;
+      g.add(rail);
+    }
+  }
+  return g;
+}
+
+function spawnDecor(type, x, z, rot) {
+  const g = buildDecorMesh(type);
+  g.position.set(x, 0, z);
+  g.rotation.y = rot;
+  scene.add(g);
+  shadowAll(g);
+  const rec = { type, x, z, rot, group: g };
+  g.traverse((o) => {
+    if (o.isMesh) pickable(o, 'decor', rec);
+  });
+  decorItems.push(rec);
+  return rec;
+}
+
+function removeDecor(rec) {
+  rec.group.traverse((o) => pickables.delete(o));
+  scene.remove(rec.group);
+  decorItems.splice(decorItems.indexOf(rec), 1);
+}
+
+function placeDecor(type, x, z) {
+  const slot = state.inv.findIndex((s) => s && s.type === type);
+  if (slot < 0) return;
+  if (decorItems.length >= 80) {
+    toast('You can place up to 80 decorations.');
+    return;
+  }
+  removeOne(slot);
+  spawnDecor(type, x, z, player.yaw);
+  SFX.place(spatial(x, z));
+  toast(`${ITEMS[type].icon} ${ITEMS[type].name} placed.`);
+}
+
+function pickupDecor(rec) {
+  if (!addItem(rec.type, 1)) {
+    toast('Your inventory is full.');
+    return;
+  }
+  removeDecor(rec);
+  SFX.pick(spatial(rec.x, rec.z));
+  toast(`${ITEMS[rec.type].name} picked up.`);
+}
+
+/* ---------- daily missions ---------- */
+const MISSION_POOL = [
+  { type: 'feed', min: 1, max: 2, reward: 8, text: (n) => `Feed your pets ${n} time${n > 1 ? 's' : ''}` },
+  { type: 'lemon', min: 3, max: 5, reward: 6, text: (n) => `Pick up ${n} lemons` },
+  { type: 'berry', min: 2, max: 4, reward: 8, text: (n) => `Pick ${n} blueberries` },
+  { type: 'sell', min: 2, max: 3, reward: 10, text: (n) => `Sell ${n} lemonades` },
+  { type: 'pet', min: 3, max: 5, reward: 6, text: (n) => `Pet your animals ${n} times` },
+  { type: 'fish', min: 1, max: 2, reward: 12, text: (n) => `Catch ${n} fish`, ok: () => !isWinter() },
+  { type: 'park', min: 1, max: 1, reward: 12, text: () => 'Take a pet to a pet park' },
+];
+
+function ensureMissions() {
+  if (state.missions && state.missions.day === state.day) return;
+  const pool = MISSION_POOL.filter((m) => !m.ok || m.ok()).sort(() => Math.random() - 0.5).slice(0, 3);
+  state.missions = {
+    day: state.day,
+    list: pool.map((m) => {
+      const goal = m.min + Math.floor(Math.random() * (m.max - m.min + 1));
+      return { type: m.type, goal, progress: 0, reward: m.reward + (goal - m.min) * 2, done: false };
+    }),
+  };
+  if (state.day > 1) toast('📋 New daily missions!');
+  renderMissions();
+}
+
+function missionText(m) {
+  const def = MISSION_POOL.find((d) => d.type === m.type);
+  return def ? def.text(m.goal) : m.type;
+}
+
+function missionEvent(type, n = 1) {
+  if (!state.missions) return;
+  for (const m of state.missions.list) {
+    if (m.type !== type || m.done) continue;
+    m.progress = Math.min(m.goal, m.progress + n);
+    if (m.progress >= m.goal) {
+      m.done = true;
+      state.coins += m.reward;
+      SFX.coin();
+      toast(`📋 Mission complete: ${missionText(m)} · +${m.reward} 🪙`);
+    }
+  }
+  renderMissions();
+}
+
+function renderMissions() {
+  const list = $('msList');
+  if (!list || !state.missions) return;
+  list.textContent = '';
+  for (const m of state.missions.list) {
+    const li = document.createElement('li');
+    li.className = m.done ? 'done' : '';
+    const top = document.createElement('div');
+    top.className = 'ms-top';
+    const name = document.createElement('span');
+    name.textContent = `${m.done ? '✅' : '⬜'} ${missionText(m)}`;
+    const reward = document.createElement('b');
+    reward.textContent = `+${m.reward} 🪙`;
+    top.append(name, reward);
+    const bar = document.createElement('div');
+    bar.className = 'bar';
+    const fill = document.createElement('i');
+    fill.style.width = `${(m.progress / m.goal) * 100}%`;
+    bar.append(fill);
+    const count = document.createElement('small');
+    count.textContent = `${m.progress} / ${m.goal}`;
+    li.append(top, bar, count);
+    list.append(li);
+  }
+  const done = state.missions.list.filter((m) => m.done).length;
+  $('missionsBtn').classList.toggle('on', done === state.missions.list.length);
+}
+
+/* ---------- fishing ---------- */
+const fishing = { active: false, t: 0, biteAt: 0, bite: false, x: 0, z: 0, bob: null, line: null };
+
+function buildFishingGear() {
+  const bob = new THREE.Group();
+  const top = new THREE.Mesh(geo.smallSphere, mats.red);
+  top.scale.setScalar(0.07);
+  const bottom = new THREE.Mesh(geo.smallSphere, mats.white);
+  bottom.scale.set(0.07, 0.04, 0.07);
+  bottom.position.y = -0.03;
+  bob.add(top, bottom);
+  bob.visible = false;
+  scene.add(bob);
+  const lineGeo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3()]);
+  const line = new THREE.Line(lineGeo, new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.75 }));
+  line.frustumCulled = false;
+  line.visible = false;
+  scene.add(line);
+  fishing.bob = bob;
+  fishing.line = line;
+
+  // the rod in the lemon's hand
+  const rod = new THREE.Group();
+  const stick = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.02, 1.1, 6), mats.darkWood);
+  stick.position.y = 0.45;
+  const reel = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 0.05, 10), mats.steel);
+  reel.rotation.z = Math.PI / 2;
+  reel.position.y = 0.08;
+  rod.add(stick, reel);
+  rod.rotation.x = 0.75;
+  rod.position.copy(HAND_POS);
+  rod.visible = false;
+  player.group.add(rod);
+  player.hand.rod = rod;
+}
+
+// Walks to the bank next to the tapped water and casts there.
+function goFish(px, pz) {
+  if (isWinter()) {
+    toast('The river is frozen. Come back in spring to fish.');
+    return;
+  }
+  let z = pz;
+  if (Math.abs(z - BRIDGE_Z) < 2) z += 3;
+  const side = Math.sign(player.x - riverX(z)) || -1;
+  const bank = { x: riverX(z) + side * (RIVER_W / 2 + 0.5), z };
+  const cast = { x: riverX(z) + side * (RIVER_W / 2 - 1.8), z };
+  goal = { kind: 'fish', x: bank.x, z: bank.z, range: 0.7, cast };
+}
+
+function castLine(cx, cz) {
+  if (isWinter()) {
+    toast('The river is frozen. Come back in spring to fish.');
+    return;
+  }
+  fishing.active = true;
+  fishing.t = 0;
+  fishing.biteAt = rnd(2.5, 6);
+  fishing.bite = false;
+  fishing.x = cx;
+  fishing.z = cz;
+  fishing.bob.visible = true;
+  fishing.line.visible = true;
+  player.yaw = Math.atan2(cx - player.x, cz - player.z);
+  SFX.splash(spatial(cx, cz));
+  toast('🎣 Waiting for a bite…');
+}
+
+function stopFishing() {
+  fishing.active = false;
+  fishing.bob.visible = false;
+  fishing.line.visible = false;
+}
+
+function updateFishing(dt) {
+  if (!fishing.active) return;
+  if (dirs.size || goal || selectedType() !== 'rod' || state.sleeping) {
+    stopFishing();
+    return;
+  }
+  fishing.t += dt;
+  const dip = fishing.bite ? -0.06 + Math.sin(T * 25) * 0.03 : Math.sin(T * 3) * 0.015;
+  fishing.bob.position.set(fishing.x, 0.08 + dip, fishing.z);
+  const s = Math.sin(player.yaw);
+  const c = Math.cos(player.yaw);
+  const p = fishing.line.geometry.attributes.position;
+  p.setXYZ(0, player.x + s * 0.85 + c * 0.3, 1.25 + player.group.position.y, player.z + c * 0.85 - s * 0.3);
+  p.setXYZ(1, fishing.x, 0.12 + dip, fishing.z);
+  p.needsUpdate = true;
+  if (!fishing.bite && fishing.t >= fishing.biteAt) {
+    fishing.bite = true;
+    bubble('❗', fishing.x, 0.9, fishing.z, { size: 64, bg: false, life: 0.8 });
+    SFX.splash(spatial(fishing.x, fishing.z));
+  }
+  if (fishing.bite && fishing.t >= fishing.biteAt + 0.7) catchFish();
+}
+
+function catchFish() {
+  const gold = Math.random() < (season().id === 'summer' ? 0.15 : 0.07);
+  const type = gold ? 'goldfish' : 'fish';
+  const x = fishing.x;
+  const z = fishing.z;
+  stopFishing();
+  if (!addItem(type, 1)) {
+    toast('Your inventory is full. The fish got away.');
+    return;
+  }
+  missionEvent('fish');
+  SFX.ding(spatial(x, z));
+  bubble(gold ? '🐡✨' : '🐠', x, 1, z, { size: 56, bg: false, life: 1.3 });
+  toast(gold ? 'A golden fish! 🐡✨ Sell it at the Lemon Market.' : 'You caught a fish! 🐠 Serve it on a plate or sell it.');
+}
+
+/* ====================================================================
    Save data: what is stored in gameSaves/{uid}
    ==================================================================== */
 const r2 = (v) => Math.round(v * 100) / 100;
@@ -4061,6 +5025,11 @@ function serializeGame() {
     vetsV: 2, // vets beyond the river
     parks: parks.map((p) => [r2(p.x), r2(p.z)]),
     chestShop: { status: chestShop.status, left: Math.round(chestShop.left * 10) / 10 },
+    coins: state.coins,
+    stand: { normal: state.stand.normal, premium: state.stand.premium },
+    missions: state.missions,
+    acc: state.acc,
+    decor: decorItems.map((d) => [d.type, r2(d.x), r2(d.z), r2(d.rot)]),
   };
 }
 
@@ -4139,6 +5108,30 @@ function applyGame(d) {
 
   picked.clear();
   for (const k of Array.isArray(d.picked) ? d.picked : []) if (typeof k === 'string') picked.add(k);
+  // coins, lemonade stand, missions, accessories and decorations
+  state.coins = count(d.coins);
+  state.stand.normal = Math.min(STAND_MAX, count(d.stand && d.stand.normal));
+  state.stand.premium = Math.min(STAND_MAX - state.stand.normal, count(d.stand && d.stand.premium));
+  renderStandCups();
+  const ms = d.missions;
+  state.missions = ms && Number.isFinite(ms.day) && Array.isArray(ms.list)
+    ? { day: ms.day, list: ms.list.filter((m) => m && MISSION_POOL.some((p) => p.type === m.type)).slice(0, 3) }
+    : null;
+  ensureMissions();
+  renderMissions();
+  for (const kind of ['dog', 'cat']) {
+    const src = (d.acc && d.acc[kind]) || {};
+    const pick = (o) => Object.fromEntries(ACCESSORIES.map((a) => [a.id, !!(o && o[a.id])]));
+    state.acc[kind] = { owned: pick(src.owned), on: pick(src.on) };
+  }
+  applyAccessories();
+  while (decorItems.length) removeDecor(decorItems[0]);
+  for (const it of Array.isArray(d.decor) ? d.decor : []) {
+    if (Array.isArray(it) && DECOR[it[0]] && decorItems.length < 80) spawnDecor(it[0], num(it[1], 0), num(it[2], 0), num(it[3], 0));
+  }
+  stopFishing();
+  applySeason(false);
+
   for (const c of chunks.values()) disposeChunk(c);
   chunks.clear();
   updateChunks(true);
@@ -4500,10 +5493,11 @@ function refreshHud() {
   $('sLemons').textContent = state.lemons;
   $('sPets').textContent = state.pets;
   $('sFed').textContent = state.fed;
+  $('sCoins').textContent = state.coins;
   const h = Math.floor(state.tod);
   const m = Math.floor((state.tod - h) * 60);
-  $('timeLbl').textContent = `Day ${state.day} · ${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
-  $('weatherLbl').textContent = state.rain > 0.5 ? '🌧 Raining' : isNight() ? '🌙 Night' : '☀️ Clear';
+  $('timeLbl').textContent = `${season().icon} ${season().name} · Day ${state.day} · ${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+  $('weatherLbl').textContent = state.rain > 0.5 ? (isWinter() ? '🌨 Snowing' : '🌧 Raining') : isNight() ? '🌙 Night' : '☀️ Clear';
   $('coordLbl').textContent = `X ${Math.round(player.x)} · Z ${Math.round(player.z)}`;
   $('stamFill').style.width = `${state.stamina}%`;
   document.querySelectorAll('#hungerRow .lem').forEach((el, i) => {
@@ -4572,6 +5566,7 @@ function labelOf(pk) {
   if (pk.kind === 'plate') return `Serve ${petName(pk.ref.who)}'s food`;
   if (pk.kind === 'dog' || pk.kind === 'cat') return `Pet ${petName(pk.kind)}`;
   if (pk.kind === 'chest') return 'Chest Shop';
+  if (pk.kind === 'decor') return `Pick up ${ITEMS[pk.ref.type].name}`;
   return pk.label || LABELS[pk.kind] || '';
 }
 function placeCursor(x, y) {
@@ -4611,8 +5606,22 @@ function handleTap(x, y) {
     startEat();
     return;
   }
+  if (t === 'rod') {
+    raycaster.setFromCamera(toNDC(x, y), camera);
+    const hit = raycaster.intersectObject(river.water, false)[0];
+    if (hit) {
+      ripple(x, y, 'Fish here');
+      goFish(hit.point.x, hit.point.z);
+      return;
+    }
+  }
   const p = groundAt(x, y);
   if (!p) return;
+  if (DECOR[t]) {
+    goal = { kind: 'placeDecor', type: t, x: p.x, z: p.z, range: 0.8 };
+    ripple(x, y, `Place ${ITEMS[t].name}`);
+    return;
+  }
   if (t === 'torch') {
     goal = { kind: 'placeTorch', x: p.x, z: p.z, range: RANGE.placeTorch };
     ripple(x, y, 'Place torch');
@@ -4668,6 +5677,11 @@ function setupInput() {
       closeShop();
       return;
     }
+    const openPanel = ['standOverlay', 'marketOverlay', 'missionsOverlay'].find((id) => !$(id).classList.contains('hidden'));
+    if (e.code === 'Escape' && openPanel) {
+      $(openPanel).classList.add('hidden');
+      return;
+    }
     if (e.code === 'Escape' && !$('mydayOverlay').classList.contains('hidden')) {
       closeAccount();
       return;
@@ -4681,7 +5695,7 @@ function setupInput() {
       dirs.add(k);
       goal = null;
     }
-    const d = /^Digit([1-5])$/.exec(e.code);
+    const d = /^Digit([1-7])$/.exec(e.code);
     if (d) selectSlot(Number(d[1]) - 1);
     if (e.code === 'KeyE') useSelected();
     if (e.code === 'KeyF') toggleCall();
@@ -4746,6 +5760,23 @@ function setupInput() {
   });
   $('wpBtn').addEventListener('click', goToWaypoint);
   $('rnGo').addEventListener('click', () => { ensureAudio(); startRenovation(); });
+  $('standClose').addEventListener('click', () => $('standOverlay').classList.add('hidden'));
+  $('makeNormal').addEventListener('click', () => makeLemonade(false));
+  $('makePremium').addEventListener('click', () => makeLemonade(true));
+  $('mkClose').addEventListener('click', () => $('marketOverlay').classList.add('hidden'));
+  document.querySelectorAll('#marketOverlay .tabs button').forEach((b) => {
+    b.addEventListener('click', () => {
+      marketTab = b.dataset.tab;
+      $('mkMsg').textContent = '';
+      renderMarket();
+    });
+  });
+  $('missionsBtn').addEventListener('click', () => {
+    ensureAudio();
+    renderMissions();
+    $('missionsOverlay').classList.remove('hidden');
+  });
+  $('msClose').addEventListener('click', () => $('missionsOverlay').classList.add('hidden'));
   $('shopClose').addEventListener('click', closeShop);
   $('shopTorches').addEventListener('click', () => { openChest(); renderShop(); });
   $('tagDog').addEventListener('click', () => { shopPet = 'dog'; renderShop(); });
@@ -4788,13 +5819,13 @@ let birdT = 2;
 let frogT = 4;
 function updateAmbient(dt) {
   if (!actx) return;
-  if (rainGain) rainGain.gain.setTargetAtTime(0.22 * state.rain, actx.currentTime, 0.2);
+  if (rainGain) rainGain.gain.setTargetAtTime(0.22 * state.rain * (isWinter() ? 0.15 : 1), actx.currentTime, 0.2);
   const rd = Math.max(0, riverDist(player.x, player.z));
   if (riverGain) riverGain.gain.setTargetAtTime(0.14 * Math.pow(clamp(1 - rd / 30, 0, 1), 2), actx.currentTime, 0.3);
   frogT -= dt;
   if (frogT <= 0) {
     frogT = rnd(3, 7);
-    if (isNight() && rd < 25) SFX.croak(spatial(riverX(player.z), player.z + rnd(-8, 8)));
+    if (isNight() && rd < 25 && !isWinter()) SFX.croak(spatial(riverX(player.z), player.z + rnd(-8, 8)));
   }
   birdT -= dt;
   if (birdT <= 0 && state.rain < 0.3 && !isNight()) {
@@ -4833,6 +5864,9 @@ function frame(now) {
   updateChestShop(dt);
   updateRiver(dt);
   updateFireflies(dt);
+  updateVisitors(dt);
+  updateFishing(dt);
+  updateSeasonal(dt);
   updateTorches(dt);
   updateFlyers(dt, T);
   updateRain(dt);
@@ -4856,6 +5890,8 @@ function frame(now) {
   hudT -= dt;
   if (hudT <= 0) {
     hudT = 0.12;
+    applySeason(true);
+    ensureMissions();
     refreshHud();
     checkBadges();
   }
@@ -4910,6 +5946,9 @@ function buildWorld() {
   buildShop({ pos: JUNE_SHOP, rot: -0.6, wall: mats.juneWall, roof: mats.juneRoof, sign: mats.signJune, kind: 'juneshop', ref: JUNE_SHOP_REF, icon: '🐟', label: 'June Food' });
   buildChestShop();
   buildTent();
+  buildStand();
+  buildMarket();
+  buildSeasonProps();
   buildRiver();
   buildPath();
   buildBridge();
@@ -4922,6 +5961,11 @@ function buildWorld() {
   buildFlyers();
   buildBeacon();
   buildFireflies();
+  buildFishingGear();
+  applyAccessories();
+  applySeason(false);
+  ensureMissions();
+  renderStandCups();
   updateChunks(true);
 }
 
