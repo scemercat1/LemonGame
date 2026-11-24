@@ -1853,36 +1853,118 @@ function buildShop({ pos, rot, wall, roof, sign, kind, ref, icon, label }) {
 }
 
 /* ====================================================================
-   Chest Shop: abandoned at first; renovate it with 7 lemons
+   Renovations: buildings that start abandoned (Chest Shop, lemonade stand)
    ==================================================================== */
-const RENOVATE_COST = 7;
 const BUILD_TIME = 35;
 const RENOVATE_RANGE = 4.5;
 const SHOP_ROT = 0.2;
-const chestShop = {
-  status: 'abandoned', // 'abandoned' | 'building' | 'open'
-  left: 0,
-  normal: null,
-  ruin: null,
-  site: null,
-  jib: null,
-  cable: null,
-  hook: null,
-  workers: [],
-  poi: null,
-  near: false,
-  dismissed: false,
-  hammerT: 0,
-  chipText: '',
-};
+const RENOVATE_COST = 7;        // lemons for the Chest Shop
+const STAND_REPAIR_COST = 10;   // coins for the lemonade stand
+const STATUSES = ['abandoned', 'building', 'open'];
+
+function makeSite(o) {
+  return {
+    ...o,
+    status: 'abandoned', // 'abandoned' | 'building' | 'open'
+    left: 0,
+    normal: null,
+    ruin: null,
+    scaffold: null,
+    jib: null,
+    cable: null,
+    hook: null,
+    poi: null,
+    near: false,
+    dismissed: false,
+    hammerT: 0,
+  };
+}
+
+const chestShop = makeSite({
+  key: 'chest',
+  title: 'Chest Shop',
+  x: CHEST_SHOP.x,
+  z: CHEST_SHOP.z,
+  rot: SHOP_ROT,
+  cost: { type: 'lemon', n: RENOVATE_COST },
+  unlockText: 'Renovate it to unlock the torch chest.',
+  doneText: 'The Chest Shop is renovated! Open the chest to get torches 🔥',
+  icons: ['🏚', '🚧', '🧰'],
+  labels: ['Abandoned shop', 'Renovating…', 'Chest Shop'],
+});
+let standSite = null;            // created in buildStand
+const sites = [];
+let renovating = null;           // the site June is working on (one at a time)
+let popupSite = null;            // the site shown in the Renovate popup
+const renoWorkers = [];
 let chestLid = null;
 let chestOpenT = 0;
+let chipText = '';
 
-// A point around the shop, given in the shop's own coordinates.
+// A point around a site, given in the site's own coordinates.
+function sitePoint(site, lx, lz) {
+  const c = Math.cos(site.rot);
+  const s = Math.sin(site.rot);
+  return { x: site.x + lx * c + lz * s, z: site.z - lx * s + lz * c };
+}
+// Used by June while she works: a point around the site being renovated.
 function shopPoint(lx, lz) {
-  const c = Math.cos(SHOP_ROT);
-  const s = Math.sin(SHOP_ROT);
-  return { x: CHEST_SHOP.x + lx * c + lz * s, z: CHEST_SHOP.z - lx * s + lz * c };
+  return sitePoint(renovating || chestShop, lx, lz);
+}
+
+// Scaffolding, a mini crane and a work in progress sign, shown while a site is built.
+function buildScaffold(site, g, box) {
+  const sc = new THREE.Group();
+  for (const x of [-1.5, 0, 1.5]) {
+    for (const z of [-0.95, 0.95]) {
+      const p = new THREE.Mesh(geo.pole, mats.steel);
+      p.position.set(x, 1.4, z);
+      sc.add(p);
+    }
+  }
+  for (const y of [1.25, 2.5]) {
+    for (const z of [-0.95, 0.95]) box(sc, 3.1, 0.05, 0.05, mats.steel, 0, y, z);
+    for (const x of [-1.5, 1.5]) box(sc, 0.05, 0.05, 1.95, mats.steel, x, y, 0);
+  }
+  for (const z of [-0.95, 0.95]) box(sc, 3.1, 0.06, 0.4, mats.wood, 0, 1.28, z);
+
+  const crane = new THREE.Group();
+  crane.position.set(2.9, 0, -1.4);
+  box(crane, 0.9, 0.3, 0.9, mats.crane, 0, 0.15, 0);
+  box(crane, 0.2, 4.2, 0.2, mats.crane, 0, 2.4, 0);
+  const jib = new THREE.Group();
+  jib.position.y = 4.5;
+  box(jib, 3.4, 0.16, 0.16, mats.crane, -1.2, 0, 0);
+  box(jib, 0.5, 0.4, 0.4, mats.steel, 0.65, -0.1, 0);
+  box(jib, 0.35, 0.35, 0.35, mats.steel, 0, -0.25, 0.25);
+  const cable = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.012, 1, 4), mats.steel);
+  cable.position.x = -2.6;
+  const hook = box(jib, 0.18, 0.14, 0.18, mats.steel, -2.6, -1.2, 0);
+  jib.add(cable);
+  crane.add(jib);
+  sc.add(crane);
+
+  const wip = new THREE.Group();
+  wip.position.set(-0.4, 0, 2.1);
+  const board = new THREE.Mesh(new THREE.PlaneGeometry(1.7, 0.55), mats.signWip);
+  board.position.y = 1.1;
+  wip.add(board);
+  for (const x of [-0.7, 0.7]) {
+    const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 1.1, 6), mats.steel);
+    leg.position.set(x, 0.55, -0.02);
+    wip.add(leg);
+  }
+  sc.add(wip);
+  for (const [x, z] of [[0.9, 2.0], [-1.6, 1.9], [1.9, 1.2]]) {
+    const cone = new THREE.Mesh(new THREE.ConeGeometry(0.15, 0.4, 10), mats.cone);
+    cone.position.set(x, 0.2, z);
+    sc.add(cone);
+  }
+  g.add(sc);
+  site.scaffold = sc;
+  site.jib = jib;
+  site.cable = cable;
+  site.hook = hook;
 }
 
 function buildChestShop() {
@@ -1958,87 +2040,28 @@ function buildChestShop() {
   rSign.rotation.z = -0.08;
   ruin.add(rSign);
   parts.push(cloth, plank1, plank2, oldChest, oldLid, rSign);
-  for (const m of parts) pickable(m, 'ruin', CHEST_REF);
+  for (const m of parts) pickable(m, 'ruin', chestShop);
   g.add(ruin);
   chestShop.ruin = ruin;
 
-  // the building site: scaffolding, a mini crane and a work in progress sign
-  const site = new THREE.Group();
-  for (const x of [-1.5, 0, 1.5]) {
-    for (const z of [-0.95, 0.95]) {
-      const p = new THREE.Mesh(geo.pole, mats.steel);
-      p.position.set(x, 1.4, z);
-      site.add(p);
-    }
-  }
-  for (const y of [1.25, 2.5]) {
-    for (const z of [-0.95, 0.95]) box(site, 3.1, 0.05, 0.05, mats.steel, 0, y, z);
-    for (const x of [-1.5, 1.5]) box(site, 0.05, 0.05, 1.95, mats.steel, x, y, 0);
-  }
-  for (const z of [-0.95, 0.95]) box(site, 3.1, 0.06, 0.4, mats.wood, 0, 1.28, z);
-
-  const crane = new THREE.Group();
-  crane.position.set(2.9, 0, -1.4);
-  box(crane, 0.9, 0.3, 0.9, mats.crane, 0, 0.15, 0);
-  box(crane, 0.2, 4.2, 0.2, mats.crane, 0, 2.4, 0);
-  const jib = new THREE.Group();
-  jib.position.y = 4.5;
-  box(jib, 3.4, 0.16, 0.16, mats.crane, -1.2, 0, 0);
-  box(jib, 0.5, 0.4, 0.4, mats.steel, 0.65, -0.1, 0);
-  box(jib, 0.35, 0.35, 0.35, mats.steel, 0, -0.25, 0.25);
-  const cable = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.012, 1, 4), mats.steel);
-  cable.position.x = -2.6;
-  const hook = box(jib, 0.18, 0.14, 0.18, mats.steel, -2.6, -1.2, 0);
-  jib.add(cable);
-  crane.add(jib);
-  site.add(crane);
-  chestShop.jib = jib;
-  chestShop.cable = cable;
-  chestShop.hook = hook;
-
-  const wip = new THREE.Group();
-  wip.position.set(-0.4, 0, 2.1);
-  const board = new THREE.Mesh(new THREE.PlaneGeometry(1.7, 0.55), mats.signWip);
-  board.position.y = 1.1;
-  wip.add(board);
-  for (const x of [-0.7, 0.7]) {
-    const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 1.1, 6), mats.steel);
-    leg.position.set(x, 0.55, -0.02);
-    wip.add(leg);
-  }
-  site.add(wip);
-  for (const [x, z] of [[0.9, 2.0], [-1.6, 1.9], [1.9, 1.2]]) {
-    const cone = new THREE.Mesh(new THREE.ConeGeometry(0.15, 0.4, 10), mats.cone);
-    cone.position.set(x, 0.2, z);
-    site.add(cone);
-  }
-  g.add(site);
-  chestShop.site = site;
-
+  buildScaffold(chestShop, g, box);
   shadowAll(g);
   chestShop.poi = addPoi({ type: 'shop', x: CHEST_SHOP.x, z: CHEST_SHOP.z, icon: '🏚', label: 'Abandoned shop', clear: 6 });
-  setChestShopStatus('abandoned', 0);
+  sites.push(chestShop);
+  setSiteStatus(chestShop, 'abandoned', 0);
 }
 
-function setChestShopStatus(status, left = 0) {
-  chestShop.status = status;
-  chestShop.left = left;
-  chestShop.ruin.visible = status === 'abandoned';
-  chestShop.normal.visible = status !== 'abandoned';
-  chestShop.normal.scale.y = status === 'building' ? 0.1 + 0.9 * (1 - left / BUILD_TIME) : 1;
-  chestShop.site.visible = status === 'building';
-  const poi = chestShop.poi;
-  if (status === 'abandoned') {
-    poi.icon = '🏚';
-    poi.label = 'Abandoned shop';
-  } else if (status === 'building') {
-    poi.icon = '🚧';
-    poi.label = 'Renovating…';
-  } else {
-    poi.icon = '🧰';
-    poi.label = 'Chest Shop';
-  }
-  hideRenovatePopup();
+function setSiteStatus(site, status, left = 0) {
+  site.status = status;
+  site.left = left;
+  site.ruin.visible = status === 'abandoned';
+  site.normal.visible = status !== 'abandoned';
+  site.normal.scale.y = status === 'building' ? 0.1 + 0.9 * (1 - left / BUILD_TIME) : 1;
+  site.scaffold.visible = status === 'building';
+  const i = STATUSES.indexOf(status);
+  site.poi.icon = site.icons[i];
+  site.poi.label = site.labels[i];
+  if (popupSite === site) hideRenovatePopup();
   updateBuildChip();
 }
 
@@ -2059,86 +2082,130 @@ function takeItems(type, n) {
   renderInv();
 }
 
-function showRenovatePopup() {
-  $('rnHave').textContent = `(you have ${countItem('lemon')})`;
+function costText(site) {
+  return site.cost.type === 'coin' ? `🪙 × ${site.cost.n}` : `🍋 × ${site.cost.n}`;
+}
+function haveFor(site) {
+  return site.cost.type === 'coin' ? state.coins : countItem('lemon');
+}
+function canAfford(site) {
+  return haveFor(site) >= site.cost.n;
+}
+function payFor(site) {
+  if (site.cost.type === 'coin') state.coins -= site.cost.n;
+  else takeItems('lemon', site.cost.n);
+}
+
+function showRenovatePopup(site) {
+  popupSite = site;
+  $('rnTitle').textContent = `🏚 Abandoned ${site.title}`;
+  $('rnText').textContent = site.unlockText;
+  $('rnCost').textContent = `Cost: ${costText(site)}`;
+  $('rnHave').textContent = `(you have ${haveFor(site)})`;
   $('renovatePop').classList.remove('hidden');
 }
 function hideRenovatePopup() {
   $('renovatePop').classList.add('hidden');
+  popupSite = null;
 }
 
-function lemonHint() {
-  const have = countItem('lemon');
-  toast(`This Chest Shop is abandoned. Bring ${RENOVATE_COST} lemons to renovate it (you have ${have}).`);
+function renovateHint(site) {
+  toast(`This ${site.title} is abandoned. Bring ${costText(site)} to renovate it (you have ${haveFor(site)}).`);
 }
 
-function startRenovation() {
-  if (chestShop.status !== 'abandoned') return;
-  if (countItem('lemon') < RENOVATE_COST) {
+// Clicking a ruin: show the popup, or say what is missing.
+function tryRuin(site) {
+  if (!site || site.status !== 'abandoned') return;
+  if (renovating) {
+    toast(`${animals.cat.name} is busy renovating the ${renovating.title}. Come back when it is done.`);
+  } else if (canAfford(site)) {
+    site.dismissed = false;
+    showRenovatePopup(site);
+  } else {
+    renovateHint(site);
+  }
+}
+
+function startRenovation(site = popupSite) {
+  if (!site || site.status !== 'abandoned') return;
+  if (renovating) {
     hideRenovatePopup();
-    lemonHint();
+    toast(`${animals.cat.name} is busy renovating the ${renovating.title}. Come back when it is done.`);
     return;
   }
-  takeItems('lemon', RENOVATE_COST);
-  setChestShopStatus('building', BUILD_TIME);
+  if (!canAfford(site)) {
+    hideRenovatePopup();
+    renovateHint(site);
+    return;
+  }
+  payFor(site);
+  renovating = site;
+  setSiteStatus(site, 'building', BUILD_TIME);
   spawnWorkers(false);
   setJuneWork(true);
   SFX.chime();
   toast(`Renovation started! ${animals.cat.name} and the lemon builders are on their way 🔨`);
 }
 
-function finishRenovation() {
-  setChestShopStatus('open', 0);
-  for (const w of chestShop.workers) w.mode = 'out';
+function finishRenovation(site) {
+  renovating = null;
+  setSiteStatus(site, 'open', 0);
+  for (const w of renoWorkers) w.mode = 'out';
   setJuneWork(false);
   SFX.chime();
-  bubble('✨ Done!', CHEST_SHOP.x, 3, CHEST_SHOP.z, { life: 2 });
-  toast('The Chest Shop is renovated! Open the chest to get torches 🔥');
+  bubble('✨ Done!', site.x, 3, site.z, { life: 2 });
+  toast(site.doneText);
 }
 
 function updateBuildChip() {
   const chip = $('buildChip');
-  if (chestShop.status !== 'building') {
+  if (!renovating) {
     chip.classList.add('hidden');
-    chestShop.chipText = '';
+    chipText = '';
     return;
   }
-  const s = Math.max(0, Math.ceil(chestShop.left));
-  const text = `🚧 Renovating the Chest Shop · ${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
-  if (text !== chestShop.chipText) {
+  const s = Math.max(0, Math.ceil(renovating.left));
+  const text = `🚧 Renovating the ${renovating.title} · ${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+  if (text !== chipText) {
     chip.textContent = text;
-    chestShop.chipText = text;
+    chipText = text;
   }
   chip.classList.remove('hidden');
 }
 
-function updateChestShop(dt) {
-  if (chestShop.status === 'abandoned') {
-    const near = Math.hypot(player.x - CHEST_SHOP.x, player.z - CHEST_SHOP.z) < RENOVATE_RANGE;
-    const enough = countItem('lemon') >= RENOVATE_COST;
-    if (near && !chestShop.near && !enough) lemonHint();
-    if (!near) chestShop.dismissed = false;
-    if (near && enough && !chestShop.dismissed) {
-      if ($('renovatePop').classList.contains('hidden')) showRenovatePopup();
-    } else if (!$('renovatePop').classList.contains('hidden')) {
+function updateRenovations(dt) {
+  for (const site of sites) {
+    if (site.status !== 'abandoned') {
+      site.near = false;
+      continue;
+    }
+    const near = Math.hypot(player.x - site.x, player.z - site.z) < RENOVATE_RANGE;
+    const enough = canAfford(site);
+    if (near && !site.near && !enough && !renovating) renovateHint(site);
+    if (!near) site.dismissed = false;
+    if (near && enough && !site.dismissed && !renovating) {
+      if (popupSite !== site) showRenovatePopup(site);
+    } else if (popupSite === site) {
       hideRenovatePopup();
     }
-    chestShop.near = near;
-  } else if (chestShop.status === 'building') {
-    chestShop.left = Math.max(0, chestShop.left - dt);
-    chestShop.normal.scale.y = 0.1 + 0.9 * (1 - chestShop.left / BUILD_TIME);
-    chestShop.jib.rotation.y = Math.sin(T * 0.35) * 1.1;
+    site.near = near;
+  }
+  const site = renovating;
+  if (site) {
+    site.left = Math.max(0, site.left - dt);
+    site.normal.scale.y = 0.1 + 0.9 * (1 - site.left / BUILD_TIME);
+    site.jib.rotation.y = Math.sin(T * 0.35) * 1.1;
     const L = 1.2 + Math.sin(T * 0.8) * 0.6;
-    chestShop.cable.scale.y = L;
-    chestShop.cable.position.y = -L / 2;
-    chestShop.hook.position.y = -L - 0.07;
-    chestShop.hammerT -= dt;
-    if (chestShop.hammerT <= 0 && chestShop.workers.some((w) => w.mode === 'work')) {
-      chestShop.hammerT = rnd(0.3, 0.7);
-      SFX.hammer(spatial(CHEST_SHOP.x, CHEST_SHOP.z));
+    site.cable.scale.y = L;
+    site.cable.position.y = -L / 2;
+    site.hook.position.y = -L - 0.07;
+    site.hammerT -= dt;
+    if (site.hammerT <= 0 && renoWorkers.some((w) => w.mode === 'work')) {
+      site.hammerT = rnd(0.3, 0.7);
+      SFX.hammer(spatial(site.x, site.z));
     }
     updateBuildChip();
-    if (chestShop.left <= 0) finishRenovation();
+    if (site.left <= 0) finishRenovation(site);
   }
   updateWorkers(dt);
 }
@@ -2179,33 +2246,33 @@ function buildWorker() {
 }
 
 function clearWorkers() {
-  for (const w of chestShop.workers) {
+  for (const w of renoWorkers) {
     scene.remove(w.group);
     scene.remove(w.blob);
   }
-  chestShop.workers.length = 0;
+  renoWorkers.length = 0;
 }
 
 function spawnWorkers(atSpot) {
   clearWorkers();
+  if (!renovating) return;
   [-1, 1].forEach((side) => {
     const w = buildWorker();
-    const spot = shopPoint(side * 1.3, 1.5);
-    const exit = shopPoint(side * 9, 9);
+    const spot = sitePoint(renovating, side * 1.3, 1.5);
+    const exit = sitePoint(renovating, side * 9, 9);
     w.spot = spot;
     w.exit = exit;
     w.x = atSpot ? spot.x : exit.x;
     w.z = atSpot ? spot.z : exit.z;
     w.mode = atSpot ? 'work' : 'in';
-    chestShop.workers.push(w);
+    renoWorkers.push(w);
   });
 }
 
 function updateWorkers(dt) {
-  const c = shopPoint(0, 0);
-  const ws = chestShop.workers;
-  for (let i = ws.length - 1; i >= 0; i--) {
-    const w = ws[i];
+  const c = renovating ? sitePoint(renovating, 0, 0) : null;
+  for (let i = renoWorkers.length - 1; i >= 0; i--) {
+    const w = renoWorkers[i];
     w.moving = false;
     if (w.mode === 'in' || w.mode === 'out') {
       const t = w.mode === 'in' ? w.spot : w.exit;
@@ -2215,13 +2282,13 @@ function updateWorkers(dt) {
         } else {
           scene.remove(w.group);
           scene.remove(w.blob);
-          ws.splice(i, 1);
+          renoWorkers.splice(i, 1);
           continue;
         }
       }
     }
     let y = 0;
-    if (w.mode === 'work') {
+    if (w.mode === 'work' && c) {
       w.yaw = angleLerp(w.yaw, Math.atan2(c.x - w.x, c.z - w.z), Math.min(1, dt * 5));
       const swing = Math.abs(Math.sin(T * 7 + w.ph));
       w.arm.rotation.x = -swing * 1.4;
@@ -3847,14 +3914,7 @@ function executeGoal(g) {
       if (chestShop.status === 'open') openShop();
       break;
     case 'berry': collectBerries(g.ref); break;
-    case 'ruin':
-      if (countItem('lemon') >= RENOVATE_COST) {
-        chestShop.dismissed = false;
-        showRenovatePopup();
-      } else {
-        lemonHint();
-      }
-      break;
+    case 'ruin': tryRuin(g.ref); break;
     case 'bed': tryBed(); break;
     case 'plate': placeFood(g.ref); break;
     case 'dog':
@@ -4369,34 +4429,90 @@ function standStock() {
 }
 
 function buildStand() {
+  standSite = makeSite({
+    key: 'stand',
+    title: 'Lemonade stand',
+    x: STAND.x,
+    z: STAND.z,
+    rot: 0,
+    cost: { type: 'coin', n: STAND_REPAIR_COST },
+    unlockText: 'Repair it to make lemonade and sell it to visitors.',
+    doneText: 'The lemonade stand is repaired! Make lemonade and visitors will come 🥤',
+    icons: ['🏚', '🚧', '🥤'],
+    labels: ['Abandoned stand', 'Repairing…', 'Lemonade stand'],
+  });
   const g = new THREE.Group();
   g.position.set(STAND.x, 0, STAND.z);
   scene.add(g);
-  const table = new THREE.Mesh(new THREE.BoxGeometry(1.8, 0.85, 0.8), mats.wood);
-  table.position.y = 0.425;
-  g.add(pickable(table, 'stand', STAND_REF));
+  const box = (parent, w, h, d, m, x, y, z) => {
+    const mm = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), m);
+    mm.position.set(x, y, z);
+    parent.add(mm);
+    return mm;
+  };
+
+  // the working stand (grows from the ground while it is being repaired)
+  const normal = new THREE.Group();
+  const table = box(normal, 1.8, 0.85, 0.8, mats.wood, 0, 0.425, 0);
+  pickable(table, 'stand', STAND_REF);
   const sign = new THREE.Mesh(new THREE.PlaneGeometry(1.6, 0.4), mats.signLemonade);
   sign.position.set(0, 0.5, 0.41);
-  g.add(pickable(sign, 'stand', STAND_REF));
+  normal.add(pickable(sign, 'stand', STAND_REF));
   const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 2.4, 6), mats.darkWood);
   pole.position.set(0, 1.2, -0.2);
-  g.add(pole);
+  normal.add(pole);
   const canopy = new THREE.Mesh(new THREE.ConeGeometry(1.4, 0.55, 12), mats.umbrella);
   canopy.position.set(0, 2.45, -0.2);
-  g.add(canopy);
+  normal.add(canopy);
   const jug = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 0.32, 12), mats.glassLemonade);
   jug.position.set(-0.6, 1.01, 0);
-  g.add(jug);
+  normal.add(jug);
   for (let i = 0; i < 6; i++) {
     const cup = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.05, 0.14, 10), mats.cup);
     cup.position.set(-0.25 + (i % 3) * 0.28, 0.92, -0.12 + Math.floor(i / 3) * 0.24);
     cup.visible = false;
-    g.add(cup);
+    normal.add(cup);
     stand.cups.push(cup);
   }
+  g.add(normal);
+  standSite.normal = normal;
+
+  // the abandoned stand
+  const ruin = new THREE.Group();
+  const parts = [];
+  const oldTable = box(ruin, 1.8, 0.6, 0.8, mats.ruinWood, 0.1, 0.28, 0);
+  oldTable.rotation.z = 0.12;
+  const oldPole = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 2.4, 6), mats.darkWood);
+  oldPole.position.set(1.2, 0.08, 0.6);
+  oldPole.rotation.set(0, 0.5, Math.PI / 2 - 0.1);
+  const oldCanopy = new THREE.Mesh(new THREE.ConeGeometry(1.3, 0.5, 12), mats.ruinCloth);
+  oldCanopy.position.set(2.1, 0.35, 1.2);
+  oldCanopy.rotation.set(0.4, 0, 1.2);
+  const oldJug = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 0.32, 12), mats.ruinWood);
+  oldJug.position.set(-1.1, 0.12, 0.7);
+  oldJug.rotation.z = Math.PI / 2;
+  ruin.add(oldPole, oldCanopy, oldJug);
+  const rSign = new THREE.Mesh(new THREE.PlaneGeometry(1.6, 0.4), mats.signAbandoned);
+  rSign.position.set(0.1, 0.32, 0.41);
+  rSign.rotation.z = -0.1;
+  ruin.add(rSign);
+  for (const [x, z] of [[-0.7, 1.1], [0.5, 1.4]]) {
+    const cup = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.05, 0.14, 10), mats.ruinWood);
+    cup.position.set(x, 0.05, z);
+    cup.rotation.x = Math.PI / 2;
+    ruin.add(cup);
+  }
+  parts.push(oldTable, oldPole, oldCanopy, oldJug, rSign);
+  for (const m of parts) pickable(m, 'ruin', standSite);
+  g.add(ruin);
+  standSite.ruin = ruin;
+
+  buildScaffold(standSite, g, box);
   shadowAll(g);
   obstacles.push({ x: STAND.x, z: STAND.z, r: 1.1, ck: 'static' });
-  addPoi({ type: 'shop', x: STAND.x, z: STAND.z, icon: '🥤', label: 'Lemonade stand', clear: 6 });
+  standSite.poi = addPoi({ type: 'shop', x: STAND.x, z: STAND.z, icon: '🏚', label: 'Abandoned stand', clear: 6 });
+  sites.push(standSite);
+  setSiteStatus(standSite, 'abandoned', 0);
 }
 
 function renderStandCups() {
@@ -4507,7 +4623,7 @@ function updateVisitors(dt) {
   stand.spawnT -= dt;
   if (stand.spawnT <= 0) {
     stand.spawnT = rnd(18, 35) * (state.rain > 0.5 ? 1.6 : 1);
-    if (daytime && standStock() > 0 && stand.visitors.length < 2 && !state.sleeping) spawnVisitor();
+    if (daytime && standSite.status === 'open' && standStock() > 0 && stand.visitors.length < 2 && !state.sleeping) spawnVisitor();
   }
   for (let i = stand.visitors.length - 1; i >= 0; i--) {
     const v = stand.visitors[i];
@@ -4819,9 +4935,9 @@ const MISSION_POOL = [
   { type: 'feed', min: 1, max: 2, reward: 8, text: (n) => `Feed your pets ${n} time${n > 1 ? 's' : ''}` },
   { type: 'lemon', min: 3, max: 5, reward: 6, text: (n) => `Pick up ${n} lemons` },
   { type: 'berry', min: 2, max: 4, reward: 8, text: (n) => `Pick ${n} blueberries` },
-  { type: 'sell', min: 2, max: 3, reward: 10, text: (n) => `Sell ${n} lemonades` },
+  { type: 'sell', min: 2, max: 3, reward: 10, text: (n) => `Sell ${n} lemonades`, ok: () => !!standSite && standSite.status === 'open' },
   { type: 'pet', min: 3, max: 5, reward: 6, text: (n) => `Pet your animals ${n} times` },
-  { type: 'fish', min: 1, max: 2, reward: 12, text: (n) => `Catch ${n} fish`, ok: () => !isWinter() },
+  { type: 'fish', min: 1, max: 2, reward: 12, text: (n) => `Catch ${n} fish`, ok: () => !isWinter() && countItem('rod') > 0 },
   { type: 'park', min: 1, max: 1, reward: 12, text: () => 'Take a pet to a pet park' },
 ];
 
@@ -5025,6 +5141,7 @@ function serializeGame() {
     vetsV: 2, // vets beyond the river
     parks: parks.map((p) => [r2(p.x), r2(p.z)]),
     chestShop: { status: chestShop.status, left: Math.round(chestShop.left * 10) / 10 },
+    standSite: { status: standSite.status, left: Math.round(standSite.left * 10) / 10 },
     coins: state.coins,
     stand: { normal: state.stand.normal, premium: state.stand.premium },
     missions: state.missions,
@@ -5094,12 +5211,18 @@ function applyGame(d) {
     if (Array.isArray(t) && torches.length < MAX_TORCHES) spawnTorch(num(t[0], 0), num(t[1], 0));
   }
 
-  // Chest Shop: abandoned, being renovated (continue the timer) or open. Older saves start abandoned.
+  // Renovations: abandoned, being renovated (the timer continues) or open. Older saves start abandoned.
   clearWorkers();
-  const cs = d.chestShop || {};
-  const shopStatus = ['abandoned', 'building', 'open'].includes(cs.status) ? cs.status : 'abandoned';
-  setChestShopStatus(shopStatus, shopStatus === 'building' ? clamp(num(cs.left, BUILD_TIME), 0, BUILD_TIME) : 0);
-  if (shopStatus === 'building') {
+  renovating = null;
+  hideRenovatePopup();
+  for (const [site, saved] of [[chestShop, d.chestShop], [standSite, d.standSite]]) {
+    const cs = saved || {};
+    let status = STATUSES.includes(cs.status) ? cs.status : 'abandoned';
+    if (status === 'building' && renovating) status = 'abandoned'; // only one renovation at a time
+    if (status === 'building') renovating = site;
+    setSiteStatus(site, status, status === 'building' ? clamp(num(cs.left, BUILD_TIME), 0, BUILD_TIME) : 0);
+  }
+  if (renovating) {
     spawnWorkers(true);
     setJuneWork(true);
   } else {
@@ -5759,7 +5882,7 @@ function setupInput() {
     setWaypoint(x, z, true);
   });
   $('wpBtn').addEventListener('click', goToWaypoint);
-  $('rnGo').addEventListener('click', () => { ensureAudio(); startRenovation(); });
+  $('rnGo').addEventListener('click', () => { ensureAudio(); startRenovation(popupSite); });
   $('standClose').addEventListener('click', () => $('standOverlay').classList.add('hidden'));
   $('makeNormal').addEventListener('click', () => makeLemonade(false));
   $('makePremium').addEventListener('click', () => makeLemonade(true));
@@ -5783,7 +5906,10 @@ function setupInput() {
   $('tagCat').addEventListener('click', () => { shopPet = 'cat'; renderShop(); });
   $('tagBuy').addEventListener('click', buyNameTag);
   $('tagName').addEventListener('keydown', (e) => { if (e.key === 'Enter') buyNameTag(); });
-  $('rnClose').addEventListener('click', () => { chestShop.dismissed = true; hideRenovatePopup(); });
+  $('rnClose').addEventListener('click', () => {
+    if (popupSite) popupSite.dismissed = true;
+    hideRenovatePopup();
+  });
 
   $('callBtn').addEventListener('click', () => { ensureAudio(); toggleCall(); });
   $('btnSound').addEventListener('click', () => {
@@ -5861,7 +5987,7 @@ function frame(now) {
   updateHealth();
   updateParks(dt);
   for (const c of crows) updateCrow(c, dt, T);
-  updateChestShop(dt);
+  updateRenovations(dt);
   updateRiver(dt);
   updateFireflies(dt);
   updateVisitors(dt);
