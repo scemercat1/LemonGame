@@ -99,7 +99,7 @@ const NAMES = { dog: 'Capi', cat: 'June' };
 const RANGE = {
   stand: 2.4, market: 2.6, decor: 1.6,
   food: 2.6, shed: 2.6, juneshop: 2.6, chest: 2.3, bed: 2.0, plate: 1.9, dog: 2.1, cat: 2.1,
-  cablebase: 2.6, cableport: 2.6, generator: 2.4, portcrate: 2.0,
+  cablebase: 2.6, cableport: 2.6, generator: 2.4, portcrate: 2.0, tickets: 2.6,
   crow: 3.2, lemon: 0.9, torch: 1.6, vet: 4.6, walk: 0.3, placeTorch: 0.8, waypoint: 1.5, ruin: 3.0, berry: 1.4,
 };
 const LABELS = {
@@ -123,6 +123,7 @@ const LABELS = {
   cableport: 'Cable car',
   generator: 'Generator',
   portcrate: 'Fish crate',
+  tickets: 'Cable car tickets',
 };
 const FOOD_REF = { x: HOUSE.x, z: HOUSE.z };
 const SHED_REF = { x: SHED.x, z: SHED.z };
@@ -4306,12 +4307,13 @@ function executeGoal(g) {
       break;
     case 'market': openMarket(); break;
     case 'cablebase':
-      if (cableBase.status === 'open') openCable('base');
+      if (cableBase.status === 'open') stationTap('base');
       break;
     case 'cableport':
-      if (cable.south === 'open') openCable('port');
+      if (cable.south === 'open') stationTap('port');
       else toast('The South Port station is still being built.');
       break;
+    case 'tickets': openTickets(); break;
     case 'generator':
       if (cableBase.status !== 'open') toast(`Build the cable car base first (${CABLE_COST} 🪙).`);
       else if (!cable.gen) openCable('base');
@@ -6261,7 +6263,7 @@ function setupInput() {
       closeShop();
       return;
     }
-    const openPanel = ['standOverlay', 'marketOverlay', 'missionsOverlay', 'cableOverlay'].find((id) => !$(id).classList.contains('hidden'));
+    const openPanel = ['standOverlay', 'marketOverlay', 'missionsOverlay', 'cableOverlay', 'ticketOverlay'].find((id) => $(id) && !$(id).classList.contains('hidden'));
     if (e.code === 'Escape' && openPanel) {
       $(openPanel).classList.add('hidden');
       return;
@@ -6350,12 +6352,12 @@ function setupInput() {
   $('wpBtn').addEventListener('click', goToWaypoint);
   $('rnGo').addEventListener('click', () => { ensureAudio(); startRenovation(popupSite); });
   $('standClose').addEventListener('click', () => $('standOverlay').classList.add('hidden'));
-  $('cbClose').addEventListener('click', closeCable);
-  $('cbGen').addEventListener('click', () => { ensureAudio(); buyGenerator(); });
-  $('cbSouth').addEventListener('click', () => { ensureAudio(); buySouthLine(); });
-  $('cbRide').addEventListener('click', () => { ensureAudio(); requestRide(); });
-  $('cbBuy1').addEventListener('click', () => { ensureAudio(); buyTickets(1); });
-  $('cbBuy2').addEventListener('click', () => { ensureAudio(); buyTickets(2); });
+  const onClick = (id, fn) => { const el = $(id); if (el) el.addEventListener('click', fn); };
+  onClick('cbClose', closeCable);
+  onClick('cbGen', () => { ensureAudio(); buyGenerator(); });
+  onClick('cbSouth', () => { ensureAudio(); buySouthLine(); });
+  onClick('cbRide', () => { ensureAudio(); requestRide(); });
+  buildTicketPanel();
   $('makeNormal').addEventListener('click', () => makeLemonade(false));
   $('makePremium').addEventListener('click', () => makeLemonade(true));
   $('mkClose').addEventListener('click', () => $('marketOverlay').classList.add('hidden'));
@@ -6566,8 +6568,8 @@ const PORT_ST = { x: SOUTH_PORT.x, z: SOUTH_PORT.z, rot: cableLine.rot + Math.PI
 const GEN_POS = stationPoint(BASE_ST, -11.6, 3);
 const PORT_QUAY = stationPoint(PORT_ST, -11, 0);   // the port's quay on the river bank (its local -x faces the water)
 // the ticket kiosks stand outside each station, on the side where you board
-const KIOSK = { x: 8.2, z: -6.5 };
-const KIOSK_FRONT = { x: 6.2, z: -6.5 };   // the window faces the platform, with a free lane between them
+// the station entrance on the boarding side, beside the columns
+const KIOSK_FRONT = { x: 6.2, z: -6.5 };
 const CABLE_BASE_REF = stationPoint(BASE_ST, KIOSK_FRONT.x, KIOSK_FRONT.z);
 const CABLE_PORT_REF = stationPoint(PORT_ST, KIOSK_FRONT.x, KIOSK_FRONT.z);
 
@@ -6760,13 +6762,6 @@ function buildStation(g, title, part) {
     P(cyl(g, 0.05, 0.05, 1.0, mats.steel, x + 0.55, 0.6, 0.5, 8), 0.9);
     P(cbox(g, 1.1, 0.05, 0.05, mats.cabinPaint, x, 1.0, 0.5), 0.9);
   }
-  // ticket kiosk on the boarding side, its window facing the platform
-  P(cbox(g, 1.6, 2.3, 1.8, mats.stationRoof, KIOSK.x, 1.15, KIOSK.z), 0.9);
-  P(cbox(g, 0.06, 0.9, 1.3, mats.stationGlass, KIOSK.x - 0.82, 1.55, KIOSK.z), 0.92);
-  P(cbox(g, 0.4, 0.07, 1.4, mats.wood2, KIOSK.x - 0.98, 1.0, KIOSK.z), 0.92);
-  P(cbox(g, 1.9, 0.15, 2.1, mats.cabinPaint, KIOSK.x, 2.37, KIOSK.z), 0.92);
-  P(signMesh(g, '🎟 TICKETS', 1.6, 0.42, KIOSK.x - 0.86, 2.05, KIOSK.z, -Math.PI / 2, ['#fff59d', '#c8332b', '#c8332b']), 0.94);
-  P(signMesh(g, '🎟 TICKETS', 1.6, 0.42, KIOSK.x + 0.86, 2.05, KIOSK.z, Math.PI / 2, ['#fff59d', '#c8332b', '#c8332b']), 0.94);
   // operator booth outside the platform
   P(cbox(g, 2.0, 2.4, 2.0, mats.stationRoof, -6.6, 1.2, 6.5), 0.9);
   P(cbox(g, 2.06, 1.0, 1.7, mats.stationGlass, -6.6, 1.7, 6.5), 0.92);
@@ -6789,7 +6784,6 @@ function stationObstacles(st) {
   add(0, -CABLE_WHEEL, CABLE_GAUGE + 0.6);
   for (let z = -CABLE_WHEEL; z <= 8; z += 1.6) add(0, z, 1.5);
   add(-6.6, 6.5, 1.3);
-  add(KIOSK.x, KIOSK.z, 1.15);
   return list;
 }
 function laneObstacles(st) {
@@ -7188,6 +7182,7 @@ function buildCableCar() {
   scene.add(post);
   obstacles.push({ x: 5.5, z: 7, r: 0.25, ck: 'static' });
 
+  buildTicketShop();
   buildGenerator();
   for (const t of cableLine.towers) routePart(buildTower(t), 0.12 + (0.43 * t.i) / Math.max(1, cableLine.towers.length - 1));
   buildOldLine();
@@ -7407,63 +7402,62 @@ function southStageIndex() {
 function openCable(at) {
   cable.overlayAt = at;
   renderCable();
-  $('cableOverlay').classList.remove('hidden');
+  cbEl('cableOverlay').classList.remove('hidden');
 }
 function closeCable() {
-  $('cableOverlay').classList.add('hidden');
+  cbEl('cableOverlay').classList.add('hidden');
 }
 function cableRunning() {
   return cable.south === 'open' && cable.gen && cable.genOn;
 }
+const noEl = { textContent: '', disabled: false, classList: { add() {}, remove() {}, contains: () => true } };
+function cbEl(id) {
+  return $(id) || noEl;
+}
 function renderCable() {
   const atBase = cable.overlayAt === 'base';
-  $('cbTitle').textContent = atBase ? '🚡 Cable car · Base' : '🚡 Cable car · South Port';
+  cbEl('cbTitle').textContent = atBase ? '🚡 Cable car · Base' : '🚡 Cable car · South Port';
   let status;
   if (cable.south !== 'open') status = 'No line is running yet.';
   else if (!cable.gen) status = 'The line is ready, but it needs a generator to run.';
   else if (!cable.genOn) status = 'Stopped: the generator is off.';
   else status = `Running · ${CABLE_CABINS} cabins · about ${Math.round(cableLine.len)} m to South Port.`;
-  $('cbStatus').textContent = status;
-  $('cbCoins').textContent = state.coins;
-  const gen = $('cbGen');
+  if (cable.south === 'open') status += ` 🎟 Tickets: ${cable.tickets}${cable.tickets ? '' : ' (buy them at the ticket shop near home)'}`;
+  cbEl('cbStatus').textContent = status;
+  cbEl('cbCoins').textContent = state.coins;
+  const gen = cbEl('cbGen');
   if (!cable.gen) {
-    $('cbGenTxt').textContent = `Powers the drive. Costs ${CABLE_COST} 🪙.`;
+    cbEl('cbGenTxt').textContent = `Powers the drive. Costs ${CABLE_COST} 🪙.`;
     gen.textContent = 'Build';
     gen.disabled = !atBase;
   } else {
-    $('cbGenTxt').textContent = cable.genOn ? 'On · humming quietly' : 'Off';
+    cbEl('cbGenTxt').textContent = cable.genOn ? 'On · humming quietly' : 'Off';
     gen.textContent = cable.genOn ? 'Turn off' : 'Turn on';
     gen.disabled = !atBase || !!ride.cab;
   }
-  if (!atBase && cable.gen) $('cbGenTxt').textContent += ' · switch it at the base';
-  const south = $('cbSouth');
+  if (!atBase && cable.gen) cbEl('cbGenTxt').textContent += ' · switch it at the base';
+  const south = cbEl('cbSouth');
   if (cable.south === 'none') {
-    $('cbSouthTxt').textContent = `The old ${Math.round(cableLine.len)} m line is broken. Renovating it costs ${LINE_COST} 🪙.`;
+    cbEl('cbSouthTxt').textContent = `The old ${Math.round(cableLine.len)} m line is broken. Renovating it costs ${LINE_COST} 🪙.`;
     south.textContent = 'Renovate';
     south.disabled = false;
   } else if (cable.south === 'building') {
     const s = Math.ceil(cable.southLeft);
-    $('cbSouthTxt').textContent = `${SOUTH_STAGES[southStageIndex()].name} · ${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+    cbEl('cbSouthTxt').textContent = `${SOUTH_STAGES[southStageIndex()].name} · ${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
     south.textContent = 'Building…';
     south.disabled = true;
   } else {
-    $('cbSouthTxt').textContent = 'Renovated ✓';
+    cbEl('cbSouthTxt').textContent = 'Renovated ✓';
     south.textContent = 'Open';
     south.disabled = true;
   }
-  const rideBtn = $('cbRide');
+  const rideBtn = cbEl('cbRide');
   rideBtn.textContent = `${atBase ? '🚡 Ride to South Port' : '🚡 Ride to the base'} · uses 1 🎟`;
   rideBtn.disabled = cable.south !== 'open';
-  $('cbTickets').textContent = cable.tickets;
-  $('cbBuy1').disabled = cable.south !== 'open';
-  $('cbBuy2').disabled = cable.south !== 'open';
-  $('cbTicketTxt').textContent = cable.south === 'open'
-    ? `One way 🪙 ${CABLE_FARE} · there and back 🪙 ${CABLE_FARE * 2}`
-    : `On sale once the South Port line is renovated (🪙 ${CABLE_FARE} one way).`;
-  $('cbMsg').textContent = '';
+  cbEl('cbMsg').textContent = '';
 }
 function cableMsg(t) {
-  $('cbMsg').textContent = t;
+  cbEl('cbMsg').textContent = t;
 }
 function buyGenerator() {
   if (cable.gen) {
@@ -7488,7 +7482,7 @@ function toggleGenerator() {
   if (cable.genOn) SFX.genStart();
   else SFX.genStop();
   applyCableVisuals();
-  if (!$('cableOverlay').classList.contains('hidden')) renderCable();
+  if (!cbEl('cableOverlay').classList.contains('hidden')) renderCable();
   toast(cable.genOn ? 'Generator on ⚡ The cabins start moving.' : 'Generator off. The cabins brake and stop.');
 }
 function buySouthLine() {
@@ -7515,6 +7509,16 @@ function finishSouthLine() {
   updateBuildChip();
 }
 
+function stationTap(at) {
+  if (cableRunning() && cable.tickets > 0) {
+    cable.overlayAt = at;
+    toast(`🎟 ${cable.tickets} ${cable.tickets === 1 ? 'ticket' : 'tickets'}: going to the platform…`);
+    requestRide();
+  } else {
+    openCable(at);
+  }
+}
+
 function boardSpot(at) {
   const L = cableLine;
   const R = CABLE_GAUGE + 1.75;
@@ -7533,7 +7537,7 @@ function requestRide() {
   if (cable.south !== 'open') return cableMsg('There is no line yet.');
   if (!cable.gen) return cableMsg('The line needs a generator to run.');
   if (!cable.genOn) return cableMsg(cable.overlayAt === 'base' ? 'Turn the generator on first.' : 'The generator at the base is off, so the cabins are stopped.');
-  if (cable.tickets < 1) return cableMsg(`Buy a ticket first: 1 ride 🪙 ${CABLE_FARE}, 2 rides (there and back) 🪙 ${CABLE_FARE * 2}.`);
+  if (cable.tickets < 1) return cableMsg('You have no ticket. Buy 1 or 2 rides at the 🎟 ticket shop near home.');
   const at = cable.overlayAt;
   const st = at === 'base' ? BASE_ST : PORT_ST;
   const p = boardSpot(at);
@@ -7550,21 +7554,64 @@ function startWaiting(at) {
 function followersNear() {
   return animalList.filter((a) => state.call && a.friend >= FOLLOW_MIN && Math.hypot(a.x - player.x, a.z - player.z) < 10);
 }
+const TICKET_SHOP = { x: 8.6, z: 8.4 };
+const TICKET_REF = { x: TICKET_SHOP.x, z: TICKET_SHOP.z };
+let ticketUI = null;
+function buildTicketShop() {
+  mats.ticketWall = std(0xf4f1ea, { roughness: 0.85 });
+  mats.ticketRoof = std(0xc8332b, { roughness: 0.7 });
+  mats.signTickets = std(0xffffff, { map: signTexture('🎟 Tickets', '#fff59d', '#c8332b', '#c8332b'), roughness: 0.8 });
+  buildShop({ pos: TICKET_SHOP, rot: Math.PI, wall: mats.ticketWall, roof: mats.ticketRoof, sign: mats.signTickets, kind: 'tickets', ref: TICKET_REF, icon: '🎟', label: 'Cable car tickets' });
+  obstacles.push({ x: TICKET_SHOP.x, z: TICKET_SHOP.z, r: 1.7, ck: 'static' });
+}
+function buildTicketPanel() {
+  const ov = document.createElement('div');
+  ov.id = 'ticketOverlay';
+  ov.className = 'overlay hidden';
+  ov.innerHTML = `<div class="card shop-card" role="dialog" aria-label="Cable car tickets">
+    <div class="md-head"><h2>🎟 Cable car tickets</h2><button class="md-x" type="button" data-t="close" aria-label="Close">✕</button></div>
+    <p class="md-text" data-t="info"></p>
+    <div class="shop-item"><div class="shop-text"><b>🚡 1 ride</b><small>One way · 🪙 ${CABLE_FARE}</small></div><button class="primary" type="button" data-t="1">Buy</button></div>
+    <div class="shop-item"><div class="shop-text"><b>🚡🚡 2 rides</b><small>There and back · 🪙 ${CABLE_FARE * 2}</small></div><button class="primary" type="button" data-t="2">Buy</button></div>
+    <p class="md-error" data-t="msg"></p>
+  </div>`;
+  document.body.appendChild(ov);
+  const q = (k) => ov.querySelector(`[data-t="${k}"]`);
+  q('close').addEventListener('click', closeTickets);
+  q('1').addEventListener('click', () => { ensureAudio(); buyTickets(1); });
+  q('2').addEventListener('click', () => { ensureAudio(); buyTickets(2); });
+  ov.addEventListener('click', (e) => { if (e.target === ov) closeTickets(); });
+  ticketUI = { ov, info: q('info'), msg: q('msg') };
+}
+function renderTickets(msg = '') {
+  if (!ticketUI) return;
+  const run = cable.south === 'open';
+  ticketUI.info.textContent = `You have ${cable.tickets} 🎟 and ${state.coins} 🪙. ` +
+    (run ? 'With a ticket, tap the cable car station and you go straight to the platform.' : 'The cable car is not running yet: renovate the base and the South Port line first.');
+  ticketUI.msg.textContent = msg;
+}
+function openTickets() {
+  if (!ticketUI) return;
+  renderTickets();
+  ticketUI.ov.classList.remove('hidden');
+}
+function closeTickets() {
+  if (ticketUI) ticketUI.ov.classList.add('hidden');
+}
 function buyTickets(n) {
-  if (cable.south !== 'open') return cableMsg('The line is not running yet.');
+  if (cable.south !== 'open') return renderTickets('The cable car is not running yet.');
   const price = CABLE_FARE * n;
-  if (state.coins < price) return cableMsg(`${n} ${n === 1 ? 'ride costs' : 'rides cost'} ${price} 🪙. You have ${state.coins}.`);
+  if (state.coins < price) return renderTickets(`${n === 1 ? '1 ride costs' : '2 rides cost'} ${price} 🪙. You have ${state.coins}.`);
   state.coins -= price;
   cable.tickets += n;
-  SFX.coin ? SFX.coin() : SFX.chime();
+  SFX.chime();
   refreshHud();
-  renderCable();
-  toast(n === 2 ? `🎟 2 rides bought: there and back (${price} 🪙).` : `🎟 1 ride bought (${price} 🪙).`);
+  renderTickets(n === 2 ? `🎟 2 rides bought (${price} 🪙): there and back.` : `🎟 1 ride bought (${price} 🪙).`);
 }
 function board(c) {
   ride.wait = null;
   if (cable.tickets < 1) {
-    toast('You have no ticket. Buy one at the station.');
+    toast('You have no ticket. Buy one at the 🎟 ticket shop near home.');
     return;
   }
   cable.tickets--;
@@ -7839,7 +7886,17 @@ function applyCable(d) {
 let lastFrame = 0;
 let thunderT = 20;
 
+let frameErrors = 0;
 function frame(now) {
+  try {
+    frameStep(now);
+  } catch (e) {
+    // keep the game running; report the first few errors only
+    if (frameErrors++ < 3) console.error(e);
+    lastFrame = now;
+  }
+}
+function frameStep(now) {
   const dt = Math.min(0.05, (now - lastFrame) / 1000 || 0.016);
   lastFrame = now;
   T += dt;
