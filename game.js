@@ -530,6 +530,8 @@ function buildMaterials(imgs) {
   mats.partyHat = std(0xff5bb0, { roughness: 0.6 });
   mats.terracotta = std(0xc1663b, { roughness: 0.9 });
   mats.lanternGlow = new THREE.MeshBasicMaterial({ color: 0xffcc66 });
+  mats.slate = std(0x2f3b33, { roughness: 0.9 });
+  mats.menuBoard = std(0xffffff, { map: signTexture('🥤 5 · 💜 9', '#2f3b33', '#ffffff', '#8b6b3e'), roughness: 0.9 });
   mats.ground = std(0x5aa23a, { roughness: 1 });
   mats.trunk = new THREE.MeshLambertMaterial({ color: 0x7a5230 });
   mats.foliage = new THREE.MeshLambertMaterial({ color: 0xffffff });
@@ -1865,6 +1867,10 @@ const STATUSES = ['abandoned', 'building', 'open'];
 function makeSite(o) {
   return {
     ...o,
+    buildTime: o.buildTime || BUILD_TIME, // seconds
+    stages: o.stages || null,             // [{ at: 0..1, name }]
+    parts: [],                            // pieces that appear one by one: { mesh, at, baseY }
+    stageIdx: -1,
     status: 'abandoned', // 'abandoned' | 'building' | 'open'
     left: 0,
     normal: null,
@@ -1960,6 +1966,17 @@ function buildScaffold(site, g, box) {
     cone.position.set(x, 0.2, z);
     sc.add(cone);
   }
+  // material pile: planks and sacks
+  for (let i = 0; i < 5; i++) {
+    const plank = box(sc, 1.2, 0.06, 0.2, mats.wood, -2.7, 0.04 + i * 0.065, 0.45 + (i % 2) * 0.22);
+    plank.rotation.y = 0.15 * (i % 3);
+  }
+  for (const [x, z] of [[-2.4, 1.15], [-3.0, 1.1]]) {
+    const sack = new THREE.Mesh(geo.smallSphere, mats.ruinCloth);
+    sack.scale.set(0.24, 0.18, 0.2);
+    sack.position.set(x, 0.17, z);
+    sc.add(sack);
+  }
   g.add(sc);
   site.scaffold = sc;
   site.jib = jib;
@@ -2054,15 +2071,49 @@ function buildChestShop() {
 function setSiteStatus(site, status, left = 0) {
   site.status = status;
   site.left = left;
-  site.ruin.visible = status === 'abandoned';
   site.normal.visible = status !== 'abandoned';
-  site.normal.scale.y = status === 'building' ? 0.1 + 0.9 * (1 - left / BUILD_TIME) : 1;
   site.scaffold.visible = status === 'building';
+  applyBuildVisuals(site);
   const i = STATUSES.indexOf(status);
   site.poi.icon = site.icons[i];
   site.poi.label = site.labels[i];
   if (popupSite === site) hideRenovatePopup();
   updateBuildChip();
+}
+
+function siteProgress(site) {
+  return clamp(1 - site.left / site.buildTime, 0, 1);
+}
+
+// Shows how far the building is: pieces appear one by one, or the whole building grows.
+function applyBuildVisuals(site) {
+  const building = site.status === 'building';
+  const p = building ? siteProgress(site) : 1;
+  if (site.parts.length) {
+    site.normal.scale.y = 1;
+    for (const part of site.parts) {
+      const t = building ? clamp((p - part.at) / 0.06, 0, 1) : 1;
+      part.mesh.visible = t > 0;
+      part.mesh.scale.y = part.baseY * Math.max(0.05, t);
+    }
+    // the old stand is cleared away during the first stage
+    const clear = site.stages ? site.stages[1].at : 0.2;
+    site.ruin.visible = site.status === 'abandoned' || (building && p < clear);
+    site.ruin.scale.y = building ? Math.max(0.05, 1 - p / clear) : 1;
+  } else {
+    site.normal.scale.y = building ? 0.1 + 0.9 * p : 1;
+    site.ruin.visible = site.status === 'abandoned';
+  }
+}
+
+function stageIndex(site) {
+  if (!site.stages) return -1;
+  const p = siteProgress(site);
+  let idx = 0;
+  site.stages.forEach((st, i) => {
+    if (p >= st.at) idx = i;
+  });
+  return idx;
 }
 
 function countItem(type) {
@@ -2140,7 +2191,8 @@ function startRenovation(site = popupSite) {
   }
   payFor(site);
   renovating = site;
-  setSiteStatus(site, 'building', BUILD_TIME);
+  site.stageIdx = -1;
+  setSiteStatus(site, 'building', site.buildTime);
   spawnWorkers(false);
   setJuneWork(true);
   SFX.chime();
@@ -2165,7 +2217,9 @@ function updateBuildChip() {
     return;
   }
   const s = Math.max(0, Math.ceil(renovating.left));
-  const text = `🚧 Renovating the ${renovating.title} · ${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+  const idx = stageIndex(renovating);
+  const stage = idx >= 0 ? ` · ${renovating.stages[idx].name}` : '';
+  const text = `🚧 ${renovating.title}${stage} · ${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
   if (text !== chipText) {
     chip.textContent = text;
     chipText = text;
@@ -2193,21 +2247,112 @@ function updateRenovations(dt) {
   const site = renovating;
   if (site) {
     site.left = Math.max(0, site.left - dt);
-    site.normal.scale.y = 0.1 + 0.9 * (1 - site.left / BUILD_TIME);
+    applyBuildVisuals(site);
+    const idx = stageIndex(site);
+    if (idx !== site.stageIdx) {
+      if (idx > 0 && site.stageIdx >= 0 && Math.hypot(player.x - site.x, player.z - site.z) < 40) {
+        toast(`🔨 ${site.title}: ${site.stages[idx].name}`);
+      }
+      site.stageIdx = idx;
+    }
     site.jib.rotation.y = Math.sin(T * 0.35) * 1.1;
     const L = 1.2 + Math.sin(T * 0.8) * 0.6;
     site.cable.scale.y = L;
     site.cable.position.y = -L / 2;
     site.hook.position.y = -L - 0.07;
     site.hammerT -= dt;
-    if (site.hammerT <= 0 && renoWorkers.some((w) => w.mode === 'work')) {
+    const hammerer = renoWorkers.find((w) => w.mode === 'work' && w.role === 'hammer');
+    if (site.hammerT <= 0 && hammerer) {
       site.hammerT = rnd(0.3, 0.7);
       SFX.hammer(spatial(site.x, site.z));
+      if (Math.random() < 0.6) spawnDust(hammerer.spot.x + rnd(-0.6, 0.6), hammerer.spot.z - 0.6);
     }
     updateBuildChip();
     if (site.left <= 0) finishRenovation(site);
   }
   updateWorkers(dt);
+  updateDust(dt);
+}
+
+/* ---------- menu and screen options ---------- */
+const UI_KEY = 'lemonGarden.ui';
+const UI_OPTS = [
+  ['optMinimap', 'hide-minimap'],
+  ['optStats', 'hide-stats'],
+  ['optNeeds', 'hide-needs'],
+  ['optActions', 'hide-actions'],
+];
+function loadUiPrefs() {
+  try {
+    return JSON.parse(localStorage.getItem(UI_KEY) || '{}') || {};
+  } catch (_) {
+    return {};
+  }
+}
+function saveUiPrefs() {
+  const prefs = { compact: document.body.classList.contains('hud-compact') };
+  for (const [id, cls] of UI_OPTS) prefs[cls] = document.body.classList.contains(cls);
+  try {
+    localStorage.setItem(UI_KEY, JSON.stringify(prefs));
+  } catch (_) { /* storage unavailable: options last until reload */ }
+}
+function closeUiMenu() {
+  $('uiMenu').classList.add('hidden');
+  $('btnMenu').setAttribute('aria-expanded', 'false');
+}
+function setupUiMenu() {
+  const prefs = loadUiPrefs();
+  document.body.classList.toggle('hud-compact', !!prefs.compact);
+  for (const [id, cls] of UI_OPTS) {
+    const hide = !!prefs[cls];
+    document.body.classList.toggle(cls, hide);
+    $(id).checked = !hide;
+    $(id).addEventListener('change', () => {
+      document.body.classList.toggle(cls, !$(id).checked);
+      saveUiPrefs();
+    });
+  }
+  $('btnMenu').addEventListener('click', (e) => {
+    e.stopPropagation();
+    const open = $('uiMenu').classList.toggle('hidden') === false;
+    $('btnMenu').setAttribute('aria-expanded', String(open));
+  });
+  $('uiMenu').addEventListener('pointerdown', (e) => e.stopPropagation());
+  document.addEventListener('pointerdown', (e) => {
+    if (!$('uiMenu').contains(e.target) && e.target !== $('btnMenu')) closeUiMenu();
+  });
+  document.querySelector('#hud .title').addEventListener('click', () => {
+    document.body.classList.toggle('hud-compact');
+    saveUiPrefs();
+  });
+}
+
+/* ---------- dust from the building site ---------- */
+const dustPuffs = [];
+let dustTex = null;
+function spawnDust(x, z) {
+  if (!dustTex) dustTex = radialCanvasTexture('rgba(205,195,175,0.75)', 'rgba(205,195,175,0)');
+  const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: dustTex, transparent: true, depthWrite: false }));
+  sp.position.set(x, 0.3, z);
+  sp.scale.setScalar(0.5);
+  scene.add(sp);
+  dustPuffs.push({ sp, t: 0, life: rnd(1, 1.6), vx: rnd(-0.3, 0.3), vz: rnd(-0.3, 0.3) });
+}
+function updateDust(dt) {
+  for (let i = dustPuffs.length - 1; i >= 0; i--) {
+    const d = dustPuffs[i];
+    d.t += dt;
+    d.sp.position.x += d.vx * dt;
+    d.sp.position.z += d.vz * dt;
+    d.sp.position.y += 0.5 * dt;
+    d.sp.scale.setScalar(0.5 + d.t * 0.9);
+    d.sp.material.opacity = clamp(1 - d.t / d.life, 0, 1) * 0.8;
+    if (d.t >= d.life) {
+      scene.remove(d.sp);
+      d.sp.material.dispose();
+      dustPuffs.splice(i, 1);
+    }
+  }
 }
 
 /* ---------- lemon builders ---------- */
@@ -2241,8 +2386,12 @@ function buildWorker() {
   head.position.y = 0.27;
   arm.add(handle, head);
   g.add(arm);
+  const plank = new THREE.Mesh(new THREE.BoxGeometry(0.95, 0.06, 0.16), mats.wood);
+  plank.position.set(0, 0.92, 0);
+  plank.visible = false;
+  g.add(plank);
   shadowAll(g);
-  return { group: g, arm, blob: makeBlob(0.7), x: 0, z: 0, yaw: 0, moving: false, mode: 'in', spot: null, exit: null, ph: rnd(0, TAU) };
+  return { group: g, arm, plank, blob: makeBlob(0.7), x: 0, z: 0, yaw: 0, moving: false, mode: 'in', role: 'hammer', leg: 'toPile', t: 0, spot: null, exit: null, pile: null, ph: rnd(0, TAU) };
 }
 
 function clearWorkers() {
@@ -2262,6 +2411,10 @@ function spawnWorkers(atSpot) {
     const exit = sitePoint(renovating, side * 9, 9);
     w.spot = spot;
     w.exit = exit;
+    w.role = side < 0 ? 'hammer' : 'carry';
+    w.pile = sitePoint(renovating, -2.7, 0.7);
+    w.leg = 'toPile';
+    w.arm.visible = w.role === 'hammer';
     w.x = atSpot ? spot.x : exit.x;
     w.z = atSpot ? spot.z : exit.z;
     w.mode = atSpot ? 'work' : 'in';
@@ -2288,13 +2441,40 @@ function updateWorkers(dt) {
       }
     }
     let y = 0;
-    if (w.mode === 'work' && c) {
+    if (w.mode === 'work' && c && w.role === 'carry') {
+      // walk to the material pile, pick up a plank, bring it to the site, put it down
+      if (w.leg === 'toPile') {
+        if (stepTo(w, w.pile.x, w.pile.z, 2.0, dt, 0.2)) {
+          w.leg = 'pick';
+          w.t = 0.6;
+        }
+      } else if (w.leg === 'pick') {
+        w.t -= dt;
+        if (w.t <= 0) {
+          w.plank.visible = true;
+          w.leg = 'toSite';
+        }
+      } else if (w.leg === 'toSite') {
+        if (stepTo(w, w.spot.x, w.spot.z, 2.0, dt, 0.2)) {
+          w.leg = 'drop';
+          w.t = 0.9;
+          w.plank.visible = false;
+          SFX.place(spatial(w.x, w.z));
+        }
+      } else {
+        w.yaw = angleLerp(w.yaw, Math.atan2(c.x - w.x, c.z - w.z), Math.min(1, dt * 5));
+        w.t -= dt;
+        if (w.t <= 0) w.leg = 'toPile';
+      }
+      if (w.moving) y = Math.abs(Math.sin(T * 11 + w.ph)) * 0.06;
+    } else if (w.mode === 'work' && c) {
       w.yaw = angleLerp(w.yaw, Math.atan2(c.x - w.x, c.z - w.z), Math.min(1, dt * 5));
       const swing = Math.abs(Math.sin(T * 7 + w.ph));
       w.arm.rotation.x = -swing * 1.4;
       y = swing * 0.03;
     } else {
       w.arm.rotation.x = 0;
+      if (w.mode === 'out') w.plank.visible = false;
       if (w.moving) y = Math.abs(Math.sin(T * 11 + w.ph)) * 0.06;
     }
     w.group.position.set(w.x, y, w.z);
@@ -3833,7 +4013,7 @@ function toggleCamera() {
       player.z + Math.cos(camYaw) * Math.cos(camPitch) * camDist
     );
   }
-  $('btnCam').textContent = first ? '👁' : '🎥';
+  $('btnCam').textContent = first ? '🎥 Third person' : '🎥 First person';
   $('btnCam').setAttribute('aria-label', first ? 'Switch to third person' : 'Switch to first person');
   SFX.click();
   toast(first ? 'First person view 👁 (drag to look around)' : 'Third person view 🎥');
@@ -3924,7 +4104,9 @@ function executeGoal(g) {
     case 'torch': pickupTorch(g.ref); break;
     case 'vet': visitVet(g.ref); break;
     case 'placeTorch': placeTorch(g.x, g.z); break;
-    case 'stand': openStand(); break;
+    case 'stand':
+      if (standSite.status === 'open') openStand();
+      break;
     case 'market': openMarket(); break;
     case 'decor': pickupDecor(g.ref); break;
     case 'placeDecor': placeDecor(g.type, g.x, g.z); break;
@@ -4436,7 +4618,15 @@ function buildStand() {
     z: STAND.z,
     rot: 0,
     cost: { type: 'coin', n: STAND_REPAIR_COST },
-    unlockText: 'Repair it to make lemonade and sell it to visitors.',
+    unlockText: 'Repair it to make lemonade and sell it to visitors. It takes about 2:30.',
+    buildTime: 150,
+    stages: [
+      { at: 0, name: 'Clearing the old stand' },
+      { at: 0.2, name: 'Building the frame' },
+      { at: 0.45, name: 'Putting up the umbrella' },
+      { at: 0.68, name: 'Painting the sign' },
+      { at: 0.86, name: 'Final touches' },
+    ],
     doneText: 'The lemonade stand is repaired! Make lemonade and visitors will come 🥤',
     icons: ['🏚', '🚧', '🥤'],
     labels: ['Abandoned stand', 'Repairing…', 'Lemonade stand'],
@@ -4451,25 +4641,71 @@ function buildStand() {
     return mm;
   };
 
-  // the working stand (grows from the ground while it is being repaired)
+  // the working stand, built piece by piece while it is being repaired
   const normal = new THREE.Group();
-  const table = box(normal, 1.8, 0.85, 0.8, mats.wood, 0, 0.425, 0);
-  pickable(table, 'stand', STAND_REF);
-  const sign = new THREE.Mesh(new THREE.PlaneGeometry(1.6, 0.4), mats.signLemonade);
-  sign.position.set(0, 0.5, 0.41);
-  normal.add(pickable(sign, 'stand', STAND_REF));
+  const part = (m, at) => {
+    standSite.parts.push({ mesh: m, at, baseY: m.scale.y });
+    return m;
+  };
+  // frame: legs, side panels and the counter top
+  for (const [x, z] of [[-0.85, -0.35], [0.85, -0.35], [-0.85, 0.35], [0.85, 0.35]]) {
+    part(box(normal, 0.08, 0.82, 0.08, mats.darkWood, x, 0.41, z), 0.2);
+  }
+  part(box(normal, 1.8, 0.62, 0.05, mats.wood, 0, 0.45, 0.38), 0.28);
+  part(box(normal, 1.8, 0.62, 0.05, mats.wood, 0, 0.45, -0.38), 0.32);
+  const top = part(box(normal, 1.95, 0.08, 0.85, mats.wood2, 0, 0.86, 0), 0.38);
+  pickable(top, 'stand', STAND_REF);
+  // umbrella
   const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 2.4, 6), mats.darkWood);
   pole.position.set(0, 1.2, -0.2);
-  normal.add(pole);
+  normal.add(part(pole, 0.45));
   const canopy = new THREE.Mesh(new THREE.ConeGeometry(1.4, 0.55, 12), mats.umbrella);
   canopy.position.set(0, 2.45, -0.2);
-  normal.add(canopy);
+  normal.add(part(canopy, 0.55));
+  // painted sign
+  const sign = new THREE.Mesh(new THREE.PlaneGeometry(1.6, 0.4), mats.signLemonade);
+  sign.position.set(0, 0.5, 0.41);
+  normal.add(part(pickable(sign, 'stand', STAND_REF), 0.68));
+  // final touches: jug, lemon crate, cash box, menu board and stools
   const jug = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 0.32, 12), mats.glassLemonade);
-  jug.position.set(-0.6, 1.01, 0);
-  normal.add(jug);
+  jug.position.set(-0.6, 1.06, 0);
+  normal.add(part(jug, 0.86));
+  part(box(normal, 0.42, 0.2, 0.3, mats.wood, 0.62, 1.0, 0.18), 0.88);
+  for (let i = 0; i < 5; i++) {
+    const lemon = new THREE.Mesh(geo.lemon, mats.lemon);
+    lemon.scale.setScalar(0.15);
+    lemon.rotation.z = Math.PI / 2;
+    lemon.position.set(0.5 + (i % 3) * 0.12, 1.14, 0.12 + Math.floor(i / 3) * 0.12);
+    normal.add(part(lemon, 0.9));
+  }
+  part(box(normal, 0.26, 0.12, 0.18, mats.steel, 0.7, 0.96, -0.26), 0.9);
+  const board = new THREE.Group();
+  board.position.set(-1.35, 0, 0.95);
+  board.rotation.y = 0.35;
+  for (const sgn of [-1, 1]) {
+    const slab = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.7, 0.03), mats.slate);
+    slab.position.set(0, 0.35, sgn * 0.09);
+    slab.rotation.x = sgn * 0.25;
+    board.add(slab);
+  }
+  const menu = new THREE.Mesh(new THREE.PlaneGeometry(0.44, 0.6), mats.menuBoard);
+  menu.position.set(0, 0.36, 0.115);
+  menu.rotation.x = 0.25;
+  board.add(menu);
+  normal.add(part(board, 0.92));
+  for (const x of [-1.3, 1.3]) {
+    const stool = new THREE.Group();
+    const seat = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.18, 0.06, 12), mats.wood2);
+    seat.position.y = 0.5;
+    const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.06, 0.5, 8), mats.darkWood);
+    leg.position.y = 0.25;
+    stool.add(seat, leg);
+    stool.position.set(x, 0, 0.5);
+    normal.add(part(stool, 0.95));
+  }
   for (let i = 0; i < 6; i++) {
     const cup = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.05, 0.14, 10), mats.cup);
-    cup.position.set(-0.25 + (i % 3) * 0.28, 0.92, -0.12 + Math.floor(i / 3) * 0.24);
+    cup.position.set(-0.25 + (i % 3) * 0.28, 0.97, -0.12 + Math.floor(i / 3) * 0.24);
     cup.visible = false;
     normal.add(cup);
     stand.cups.push(cup);
@@ -5220,7 +5456,8 @@ function applyGame(d) {
     let status = STATUSES.includes(cs.status) ? cs.status : 'abandoned';
     if (status === 'building' && renovating) status = 'abandoned'; // only one renovation at a time
     if (status === 'building') renovating = site;
-    setSiteStatus(site, status, status === 'building' ? clamp(num(cs.left, BUILD_TIME), 0, BUILD_TIME) : 0);
+    site.stageIdx = -1;
+    setSiteStatus(site, status, status === 'building' ? clamp(num(cs.left, site.buildTime), 0, site.buildTime) : 0);
   }
   if (renovating) {
     spawnWorkers(true);
@@ -5916,11 +6153,15 @@ function setupInput() {
     state.muted = !state.muted;
     ensureAudio();
     if (master) master.gain.value = state.muted ? 0 : 0.8;
-    $('btnSound').textContent = state.muted ? '🔇' : '🔊';
+    $('btnSound').textContent = state.muted ? '🔇 Sound off' : '🔊 Sound on';
   });
   $('btnRain').addEventListener('click', () => { ensureAudio(); toggleRain(); });
   $('btnCam').addEventListener('click', () => { ensureAudio(); toggleCamera(); });
-  $('btnHelp').addEventListener('click', () => $('start').classList.remove('hidden'));
+  $('btnHelp').addEventListener('click', () => {
+    closeUiMenu();
+    $('start').classList.remove('hidden');
+  });
+  setupUiMenu();
   $('btnStart').addEventListener('click', () => {
     ensureAudio();
     $('start').classList.add('hidden');
