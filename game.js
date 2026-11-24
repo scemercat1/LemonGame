@@ -313,6 +313,9 @@ function noise({ dur = 0.1, vol = 0.3, at = 0, f = 1000, q = 1, type = 'bandpass
 }
 
 const SFX = {
+  jump() {
+    tone({ type: 'sine', f0: 320, f1: 620, dur: 0.16, vol: 0.12 });
+  },
   bark(sp) {
     for (let i = 0; i < 2; i++) {
       tone({ type: 'sawtooth', f0: 470, f1: 190, dur: 0.17, vol: 0.2, at: i * 0.26, sp, filt: { type: 'lowpass', f: 1100, q: 3 } });
@@ -499,14 +502,110 @@ function std(color, extra = {}) {
   return new THREE.MeshStandardMaterial({ color, roughness: 0.85, ...extra });
 }
 
+/* ---------- wind: grass and flowers sway, grass is darker at the root ---------- */
+const windU = { uTime: { value: 0 }, uWind: { value: 1 } };
+function windMaterial(mat, shade) {
+  mat.onBeforeCompile = (sh) => {
+    sh.uniforms.uTime = windU.uTime;
+    sh.uniforms.uWind = windU.uWind;
+    sh.vertexShader = 'uniform float uTime;\nuniform float uWind;\nvarying float vH;\n' + sh.vertexShader.replace(
+      '#include <project_vertex>',
+      `vec4 mvPosition = vec4(transformed, 1.0);
+      #ifdef USE_INSTANCING
+        mvPosition = instanceMatrix * mvPosition;
+      #endif
+      vH = clamp(transformed.y, 0.0, 1.0);
+      float hh = max(mvPosition.y, 0.0);
+      float gust = sin(uTime * 0.7 + mvPosition.x * 0.05) * 0.5 + 0.5;
+      float wv = sin(uTime * 1.9 + mvPosition.x * 0.35 + mvPosition.z * 0.27) * (0.6 + gust * 0.6)
+               + sin(uTime * 3.7 + mvPosition.x * 1.3 - mvPosition.z * 0.9) * 0.2;
+      mvPosition.x += wv * 0.11 * hh * hh * uWind;
+      mvPosition.z += wv * 0.05 * hh * hh * uWind;
+      mvPosition = modelViewMatrix * mvPosition;
+      gl_Position = projectionMatrix * mvPosition;`
+    );
+    sh.fragmentShader = 'varying float vH;\n' + sh.fragmentShader.replace(
+      '#include <color_fragment>',
+      shade ? '#include <color_fragment>\n diffuseColor.rgb *= mix(0.5, 1.15, vH);' : '#include <color_fragment>'
+    );
+  };
+  mat.customProgramCacheKey = () => (shade ? 'wind-shade' : 'wind');
+  return mat;
+}
+
+// soft, mottled ground: patches of lighter and darker grass, a few bare spots and specks
+function groundTexture() {
+  const c = document.createElement('canvas');
+  c.width = c.height = 512;
+  const g = c.getContext('2d');
+  const r = mulberry32(42);
+  g.fillStyle = '#e8e8e8';
+  g.fillRect(0, 0, 512, 512);
+  const blob = (x, y, rad, col) => {
+    for (const dx of [-512, 0, 512]) for (const dy of [-512, 0, 512]) {
+      const gr = g.createRadialGradient(x + dx, y + dy, 0, x + dx, y + dy, rad);
+      gr.addColorStop(0, col);
+      gr.addColorStop(1, 'rgba(0,0,0,0)');
+      g.fillStyle = gr;
+      g.fillRect(x + dx - rad, y + dy - rad, rad * 2, rad * 2);
+    }
+  };
+  for (let i = 0; i < 40; i++) blob(r() * 512, r() * 512, 40 + r() * 90, `rgba(${r() < 0.5 ? '255,255,235' : '150,160,120'},${0.18 + r() * 0.2})`);
+  for (let i = 0; i < 6; i++) blob(r() * 512, r() * 512, 20 + r() * 30, 'rgba(190,160,110,0.35)');
+  for (let i = 0; i < 2600; i++) {
+    const v = r() < 0.5 ? 255 : 120;
+    g.fillStyle = `rgba(${v},${v},${v - 20},${0.08 + r() * 0.12})`;
+    g.fillRect(r() * 512, r() * 512, 1 + r() * 2, 1 + r() * 3);
+  }
+  const t = texFromCanvas(c, true);
+  t.anisotropy = 8;
+  t.repeat.set(1200 / GROUND_TILE, 1200 / GROUND_TILE);
+  return t;
+}
+const GROUND_TILE = 14;
+
+/* ---------- pollen and seeds floating in the sunlight ---------- */
+const POLLEN_N = 90;
+const pollenData = [];
+let pollen = null;
+function buildPollen() {
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(POLLEN_N * 3), 3));
+  for (let i = 0; i < POLLEN_N; i++) {
+    pollenData.push({ x: rnd(-16, 16), z: rnd(-16, 16), y: rnd(0.3, 3.5), ph: rnd(0, TAU), sp: rnd(0.2, 0.6) });
+  }
+  const m = new THREE.PointsMaterial({
+    size: 0.09, map: glowTex, color: 0xfff6d0, transparent: true, opacity: 0,
+    depthWrite: false, blending: THREE.AdditiveBlending,
+  });
+  pollen = new THREE.Points(g, m);
+  pollen.frustumCulled = false;
+  scene.add(pollen);
+}
+function updatePollen(dt) {
+  const day = state.dayF * (1 - state.rain) * (isWinter() ? 0 : 1);
+  pollen.visible = day > 0.05;
+  if (!pollen.visible) return;
+  pollen.material.opacity = day * 0.8;
+  const p = pollen.geometry.attributes.position;
+  for (let i = 0; i < POLLEN_N; i++) {
+    const d = pollenData[i];
+    d.ph += dt * d.sp;
+    d.x = wrapNear(d.x + (0.35 + Math.sin(d.ph * 1.3) * 0.25) * dt, player.x, 16);
+    d.z = wrapNear(d.z + Math.cos(d.ph * 0.9) * 0.2 * dt, player.z, 16);
+    p.setXYZ(i, d.x, d.y + Math.sin(d.ph * 2) * 0.3, d.z);
+  }
+  p.needsUpdate = true;
+}
+
 function buildMaterials(imgs) {
   const dogCoatTex = texFromCanvas(canvasFromImage(imgs.dogCoat, 256), true);
   const dogFaceTex = featherFace(imgs.dogFace);
   const catCoatTex = texFromCanvas(tabbyCanvas(imgs.catCoat), true);
   const catFaceTex = featherFace(imgs.catFace);
 
-  mats.grass = new THREE.MeshLambertMaterial({ side: THREE.DoubleSide });
-  mats.flower = new THREE.MeshLambertMaterial();
+  mats.grass = windMaterial(new THREE.MeshLambertMaterial({ side: THREE.DoubleSide }), true);
+  mats.flower = windMaterial(new THREE.MeshLambertMaterial(), false);
   mats.leaf = new THREE.MeshLambertMaterial({ side: THREE.DoubleSide });
   mats.fallLeaf = new THREE.MeshLambertMaterial({ side: THREE.DoubleSide });
   mats.petal = new THREE.MeshLambertMaterial({ color: 0xffb8d6, side: THREE.DoubleSide });
@@ -532,7 +631,7 @@ function buildMaterials(imgs) {
   mats.lanternGlow = new THREE.MeshBasicMaterial({ color: 0xffcc66 });
   mats.slate = std(0x2f3b33, { roughness: 0.9 });
   mats.menuBoard = std(0xffffff, { map: signTexture('🥤 5 · 💜 9', '#2f3b33', '#ffffff', '#8b6b3e'), roughness: 0.9 });
-  mats.ground = std(0x5aa23a, { roughness: 1 });
+  mats.ground = std(0x5aa23a, { roughness: 1, map: groundTexture() });
   mats.trunk = new THREE.MeshLambertMaterial({ color: 0x7a5230 });
   mats.foliage = new THREE.MeshLambertMaterial({ color: 0xffffff });
   mats.lemon = std(0xffd53a, { roughness: 0.35 });
@@ -3551,7 +3650,7 @@ function updateBubbles(dt) {
 /* ====================================================================
    Player: a lemon with a face
    ==================================================================== */
-const player = { x: SPAWN.x, z: SPAWN.z, yaw: Math.PI, group: null, body: null, hand: {}, eatLemon: null, walkT: 0, stepT: 0, blob: null, vx: 0, vz: 0 };
+const player = { x: SPAWN.x, z: SPAWN.z, yaw: Math.PI, group: null, body: null, hand: {}, eatLemon: null, walkT: 0, stepT: 0, blob: null, vx: 0, vz: 0, jy: 0, jv: 0, jumpQ: 0 };
 const HAND_POS = new THREE.Vector3(0.3, 0.3, 0.2);
 const MOUTH_POS = new THREE.Vector3(0, 0.46, 0.34);
 
@@ -3678,6 +3777,13 @@ function updateEating(dt) {
   }
 }
 
+const JUMP_SPEED = 5.2;
+const GRAVITY = 16;
+function jump() {
+  ensureAudio();
+  player.jumpQ = 0.15; // a press just before landing still counts
+}
+
 function updatePlayer(dt) {
   const fwd = (dirs.has('up') ? 1 : 0) - (dirs.has('down') ? 1 : 0);
   const side = (dirs.has('right') ? 1 : 0) - (dirs.has('left') ? 1 : 0);
@@ -3761,12 +3867,41 @@ function updatePlayer(dt) {
     }
   }
 
+  // jumping: a short hop with gravity, a squash on take off and on landing
+  player.jumpQ = Math.max(0, player.jumpQ - dt);
+  const grounded = player.jy <= 0 && player.jv <= 0;
+  if (player.jumpQ > 0 && grounded && !state.sleeping && state.eatT <= 0) {
+    player.jumpQ = 0;
+    player.jv = JUMP_SPEED;
+    state.stamina = Math.max(0, state.stamina - 3);
+    SFX.jump();
+  }
+  if (!grounded) {
+    player.jv -= GRAVITY * dt;
+    player.jy += player.jv * dt;
+    if (player.jy <= 0) {
+      player.jy = 0;
+      player.jv = 0;
+      player.landT = 0.18;
+      SFX.step(spatial(player.x, player.z));
+      if (!inWater) for (let i = 0; i < 3; i++) spawnDust(player.x + rnd(-0.3, 0.3), player.z + rnd(-0.3, 0.3));
+    }
+  }
+  player.landT = Math.max(0, (player.landT || 0) - dt);
+
   const lift = onBridge(player.x, player.z) ? 0.27 : inRiver(player.x, player.z, -0.4) ? (isWinter() ? 0.04 : -0.14) : 0;
-  player.group.position.set(player.x, lift, player.z);
+  player.group.position.set(player.x, lift + player.jy, player.z);
   player.group.rotation.y = player.yaw;
   player.body.position.y = 0.42 + (moving ? Math.abs(Math.sin(player.walkT)) * 0.05 : 0);
-  if (state.eatT <= 0) player.body.scale.set(0.8, 0.8 + (moving ? Math.sin(player.walkT * 2) * 0.03 : 0), 0.8);
+  if (state.eatT <= 0) {
+    let sy = 0.8 + (moving ? Math.sin(player.walkT * 2) * 0.03 : 0);
+    if (player.jy > 0) sy = 0.8 + clamp(player.jv * 0.025, -0.06, 0.1); // stretch in the air
+    if (player.landT > 0) sy = 0.8 - player.landT * 0.6;                // squash on landing
+    const sx = 0.8 + (0.8 - sy) * 0.5;
+    player.body.scale.set(sx, sy, sx);
+  }
   player.blob.position.set(player.x, 0.01, player.z);
+  player.blob.scale.setScalar(Math.max(0.5, 1 - player.jy * 0.35));
   const sel = selectedType();
   for (const [k, m] of Object.entries(player.hand)) m.visible = k === sel && !(k === 'lemon' && state.eatT > 0);
   player.group.visible = !state.sleeping && state.camMode === 'third';
@@ -6058,6 +6193,10 @@ function setupInput() {
     const d = /^Digit([1-7])$/.exec(e.code);
     if (d) selectSlot(Number(d[1]) - 1);
     if (e.code === 'KeyE') useSelected();
+    if (e.code === 'Space') {
+      e.preventDefault();
+      if (!e.repeat) jump();
+    }
     if (e.code === 'KeyF') toggleCall();
     if (e.code === 'KeyV') toggleCamera();
     if (e.code === 'KeyM') (mapView.open ? closeMap() : openMap());
@@ -6071,7 +6210,7 @@ function setupInput() {
   });
   window.addEventListener('blur', () => { dirs.clear(); state.sprintKey = false; });
 
-  document.querySelectorAll('#dpad button').forEach((b) => {
+  document.querySelectorAll('#dpad button[data-dir]').forEach((b) => {
     const d = b.dataset.dir;
     const on = (e) => {
       e.preventDefault();
@@ -6091,6 +6230,7 @@ function setupInput() {
     b.addEventListener('lostpointercapture', off);
   });
 
+  $('jumpBtn').addEventListener('pointerdown', (e) => { e.preventDefault(); jump(); });
   const sprint = $('sprintBtn');
   sprint.addEventListener('pointerdown', (e) => { e.preventDefault(); ensureAudio(); state.sprintBtn = true; sprint.classList.add('on'); });
   const sprintOff = () => { state.sprintBtn = false; sprint.classList.remove('on'); };
@@ -6223,6 +6363,11 @@ function frame(now) {
   updatePlayer(dt);
   updateCamera(dt);
   ground.position.set(player.x, 0, player.z);
+  // keep the ground pattern fixed in the world while the plane follows the lemon
+  mats.ground.map.offset.set(player.x / GROUND_TILE, -player.z / GROUND_TILE);
+  windU.uTime.value = T;
+  windU.uWind.value = 1 + state.rain * 1.2;
+  updatePollen(dt);
   updateEnvironment(dt);
   for (const a of animalList) updateAnimal(a, dt, T);
   updateHealth();
@@ -6328,6 +6473,7 @@ function buildWorld() {
   buildFlyers();
   buildBeacon();
   buildFireflies();
+  buildPollen();
   buildFishingGear();
   applyAccessories();
   applySeason(false);
@@ -6343,7 +6489,8 @@ function startRenderer() {
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 1.05;
+  renderer.toneMappingExposure = 1.1;
+  renderer.outputColorSpace = THREE.SRGBColorSpace;
 }
 
 async function init() {
