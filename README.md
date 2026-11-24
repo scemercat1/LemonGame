@@ -38,7 +38,7 @@ Written with Three.js and no build step, so it runs directly on GitHub Pages.
   - **Base station** (🪙 30): June and the lemon builders build it in about 1:30, with a tower crane.
   - **Generator** (🪙 30): powers the drive. Tap it to turn it on or off. It hums quietly and puffs a little smoke while it runs.
   - **South Port line** (🪙 30): about 300 m along the river. The towers go up one by one, then the haul rope is pulled, the South Port station is built and the 5 cabins are hung (about 1:30).
-  - **Riding:** with the generator on, the 5 cabins go round non stop. They slow down in the stations, go round the bullwheel, speed up to 6 m/s on the line and click over the tower wheels. Tap a station and **Ride**, wait on the platform and step into the next cabin. Pets that follow you ride along.
+  - **Riding:** with the generator on, the 5 cabins go round non stop. They slow down in the stations, go round the bullwheel, speed up to 6 m/s on the line and click over the tower wheels. Tap a station and **Ride**, wait on the platform and step into the next cabin. A one-way ticket costs 🪙 5, paid when you step in; pets that follow you ride along for free. A signpost by the path near home and a tall billboard on the plot show where to build it; the planned line is drawn dashed on the map.
   - **South Port** is a fishing harbour with a quay, a pier and boats. While you are within 30 m of it, the fishermen put 1 fish a minute in its crate (up to 12; sometimes a golden fish). Tap the crate to take them.
   - **North Port** is locked for now (coming soon).
 - Sleep in the tent at night, sprint with stamina, watch the rain and the day/night cycle.
