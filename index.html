@@ -299,6 +299,7 @@
     .dpad .left { grid-column: 1; grid-row: 2; }
     .dpad .right { grid-column: 3; grid-row: 2; }
     .dpad .down { grid-column: 2; grid-row: 3; }
+    .dpad .jump { grid-column: 2; grid-row: 2; border-radius: 50%; font-size: 20px; }
 
     .actions {
       position: fixed;
@@ -794,6 +795,7 @@
     <button data-dir="left" class="left" aria-label="Left">◀</button>
     <button data-dir="right" class="right" aria-label="Right">▶</button>
     <button data-dir="down" class="down" aria-label="Back">▼</button>
+    <button id="jumpBtn" class="jump" aria-label="Jump">⤒</button>
   </div>
 
   <div class="actions">
@@ -952,6 +954,7 @@
           <li><b>M</b> – map: click it to set a waypoint and walk there</li>
           <li><b>V</b> or ☰ → 🎥 – switch between third person and first person</li>
           <li><b>☰</b> – menu: camera, rain, sound, help and what to show on screen</li>
+          <li><b>Space</b> / <b>JUMP</b> – jump</li>
           <li>Bring <b>7 lemons</b> to the abandoned Chest Shop to renovate it and unlock torches</li>
           <li>Chest Shop: torches and <b>name tags</b> (🍋 × 5) to rename your pets</li>
           <li>Pick <b>blueberries</b> in the forests (max 6) and serve them: the next vet check-up moves one day later</li>

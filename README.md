@@ -7,11 +7,13 @@ Written with Three.js and no build step, so it runs directly on GitHub Pages.
 
 **On a computer**
 - `W A S D` – move
+- `Space` – jump · `Shift` – sprint
 - `Left click` – pet the animals, grab food from the doghouse, put food on the plate
 - `Drag with the mouse` – rotate the camera · `Mouse wheel` – zoom
 
 **On a phone**
 - On-screen arrows – move (only shown on phones)
+- ⤒ in the middle of the arrows – jump
 - `Tap` an animal, the food house or the plate – your lemon walks over and acts
 - `Drag with your finger` – rotate the camera
 
@@ -31,6 +33,7 @@ Written with Three.js and no build step, so it runs directly on GitHub Pages.
 - **Fish** in the river with the rod (not in winter): fish feed your pets, golden fish sell for 20 🪙.
 - Open the **map** (🗺, minimap or **M**), tap a spot to set a waypoint and walk there.
 - The **☰ menu** (top right) holds the camera, rain, sound and help buttons, and lets you hide the minimap, the stats panel, hunger and stamina, or the Tasks and Call buttons. Tap the 🍋 title to fold the top-left panel. These choices are remembered on this device.
+- The garden looks more alive: grass and flowers sway in the wind (stronger in the rain), the ground has patches and bare spots, pollen floats in the sunlight, and the lemon kicks up dust when it lands after a jump.
 - Sleep in the tent at night, sprint with stamina, watch the rain and the day/night cycle.
 - Follow the stone path from the tent past Capi's house to the river and cross it on the bridge (or wade through, slower). Capi and June sometimes go to the river to drink. Listen to the water, the frogs at night and watch the fireflies.
 
