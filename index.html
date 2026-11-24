@@ -155,6 +155,8 @@
     .menu-sep { font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; opacity: 0.6; margin: 6px 4px 0; }
     .menu-opt { display: flex; align-items: center; gap: 8px; font-size: 14px; padding: 5px 6px; cursor: pointer; }
     .menu-opt input { width: 18px; height: 18px; accent-color: #6aa84f; }
+    .cb-ride { width: 100%; margin-top: 10px; padding: 12px; font-size: 16px; }
+    .primary:disabled { opacity: 0.45; cursor: default; }
     .menu-tip { font-size: 11px; opacity: 0.6; margin: 4px 4px 2px; }
     #hud .time { font-size: 12px; opacity: 0.8; margin-bottom: 6px; }
     #hud .row { display: flex; justify-content: space-between; gap: 14px; font-size: 13px; padding: 2px 0; }
@@ -907,6 +909,31 @@
     </div>
   </div>
 
+  <div id="cableOverlay" class="overlay hidden">
+    <div class="card shop-card" role="dialog" aria-labelledby="cbTitle">
+      <div class="md-head">
+        <h2 id="cbTitle">🚡 Cable car</h2>
+        <button id="cbClose" class="md-x" type="button" aria-label="Close">✕</button>
+      </div>
+      <p id="cbStatus" class="md-text"></p>
+      <p class="md-note">🪙 You have <b id="cbCoins">0</b> coins.</p>
+      <div class="shop-item">
+        <div class="shop-text"><b>⚡ Generator</b><small id="cbGenTxt"></small></div>
+        <button id="cbGen" class="primary" type="button">Build</button>
+      </div>
+      <div class="shop-item">
+        <div class="shop-text"><b>⚓ South Port line</b><small id="cbSouthTxt"></small></div>
+        <button id="cbSouth" class="primary" type="button">Build</button>
+      </div>
+      <div class="shop-item">
+        <div class="shop-text"><b>🔒 North Port line</b><small>Locked · coming soon</small></div>
+        <button class="primary" type="button" disabled>Locked</button>
+      </div>
+      <button id="cbRide" class="primary cb-ride" type="button">🚡 Ride to South Port</button>
+      <p id="cbMsg" class="md-error"></p>
+    </div>
+  </div>
+
   <div id="marketOverlay" class="overlay hidden">
     <div class="card shop-card" role="dialog" aria-labelledby="mkTitle">
       <div class="md-head">
@@ -959,6 +986,7 @@
           <li>Chest Shop: torches and <b>name tags</b> (🍋 × 5) to rename your pets</li>
           <li>Pick <b>blueberries</b> in the forests (max 6) and serve them: the next vet check-up moves one day later</li>
           <li><b>Lemonade stand</b>: repair it for 🪙 10, then make lemonade and visitors buy it · <b>Lemon Market</b>: accessories, garden decorations, fishing rod</li>
+          <li><b>🚡 Cable car</b> (south of home): build the base, the generator and the line to <b>South Port</b> (🪙 30 each), then ride a cabin. Near the port you get 1 fish a minute in its crate.</li>
           <li><b>📋 Tasks</b>: daily missions for coins · seasons change every 4 days (winter: the river freezes, skate on it!)</li>
           <li><b>Drag with the mouse</b> – rotate · <b>Wheel</b> – zoom</li>
         </ul>
@@ -976,6 +1004,7 @@
           <li>Chest Shop: torches and <b>name tags</b> (🍋 × 5) to rename your pets</li>
           <li>Pick <b>blueberries</b> in the forests (max 6) and serve them: the next vet check-up moves one day later</li>
           <li><b>Lemonade stand</b>: repair it for 🪙 10, then make lemonade and visitors buy it · <b>Lemon Market</b>: accessories, garden decorations, fishing rod</li>
+          <li><b>🚡 Cable car</b> (south of home): build the base, the generator and the line to <b>South Port</b> (🪙 30 each), then ride a cabin. Near the port you get 1 fish a minute in its crate.</li>
           <li><b>📋 Tasks</b>: daily missions for coins · seasons change every 4 days (winter: the river freezes, skate on it!)</li>
           <li><b>Drag with your finger</b> – rotate the camera</li>
         </ul>
