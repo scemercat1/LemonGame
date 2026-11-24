@@ -113,7 +113,49 @@
       min-width: 190px;
       z-index: 10;
     }
-    #hud .title { font-weight: 800; font-size: 15px; margin-bottom: 2px; }
+    #hud .title { font-weight: 800; font-size: 15px; margin-bottom: 2px; cursor: pointer; user-select: none; }
+    #hud .title::after { content: ' ▾'; font-size: 11px; opacity: 0.55; }
+    body.hud-compact #hud .title::after { content: ' ▸'; }
+    body.hud-compact #hud > :not(.title) { display: none; }
+    body.hud-compact #hud { min-width: 0; width: auto; }
+    body.hide-stats #hud .row, body.hide-stats #hud .friend { display: none; }
+    body.hide-minimap .map-col { display: none; }
+    body.hide-needs .needs { display: none; }
+    body.hide-actions #missionsBtn, body.hide-actions #callBtn { display: none; }
+
+    /* ---------- menu ---------- */
+    .ui-menu {
+      position: fixed;
+      right: 12px;
+      top: 66px;
+      width: 220px;
+      max-width: calc(100vw - 24px);
+      background: var(--glass);
+      border-radius: 16px;
+      box-shadow: var(--shadow);
+      padding: 8px;
+      z-index: 30;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .ui-menu.hidden { display: none; }
+    .menu-row {
+      border: 0;
+      background: rgba(0, 0, 0, 0.05);
+      border-radius: 10px;
+      padding: 9px 10px;
+      text-align: left;
+      font: 600 14px/1.2 inherit;
+      font-family: inherit;
+      color: inherit;
+      cursor: pointer;
+    }
+    .menu-row:active { background: rgba(0, 0, 0, 0.12); }
+    .menu-sep { font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; opacity: 0.6; margin: 6px 4px 0; }
+    .menu-opt { display: flex; align-items: center; gap: 8px; font-size: 14px; padding: 5px 6px; cursor: pointer; }
+    .menu-opt input { width: 18px; height: 18px; accent-color: #6aa84f; }
+    .menu-tip { font-size: 11px; opacity: 0.6; margin: 4px 4px 2px; }
     #hud .time { font-size: 12px; opacity: 0.8; margin-bottom: 6px; }
     #hud .row { display: flex; justify-content: space-between; gap: 14px; font-size: 13px; padding: 2px 0; }
     #hud b { font-variant-numeric: tabular-nums; }
@@ -355,6 +397,7 @@
     body.touch .action { width: 60px; height: 60px; font-size: 12px; }
     body.touch #minimap { width: 96px; height: 96px; }
     body.touch .top-right { gap: 5px; right: 8px; top: 8px; }
+    body.touch .ui-menu { right: 8px; top: 58px; }
     body.touch .round { width: 36px; height: 36px; font-size: 16px; }
     body.touch .map-col { top: 52px; right: 8px; }
     body.touch #hud { left: 8px; top: 8px; min-width: 0; width: 168px; padding: 8px 10px; }
@@ -676,11 +719,21 @@
   </div>
 
   <div class="top-right">
-    <button id="btnCam" class="round" aria-label="Switch to first person">🎥</button>
     <button id="btnMap" class="round" aria-label="Open map">🗺</button>
-    <button id="btnRain" class="round" aria-label="Toggle rain">☂</button>
-    <button id="btnSound" class="round" aria-label="Sound">🔊</button>
-    <button id="btnHelp" class="round" aria-label="Help">?</button>
+    <button id="btnMenu" class="round" aria-label="Menu" aria-expanded="false">☰</button>
+  </div>
+
+  <div id="uiMenu" class="ui-menu hidden" role="menu">
+    <button id="btnCam" class="menu-row" aria-label="Switch to first person">🎥 First person</button>
+    <button id="btnRain" class="menu-row" aria-label="Toggle rain">☂ Rain</button>
+    <button id="btnSound" class="menu-row" aria-label="Sound">🔊 Sound on</button>
+    <button id="btnHelp" class="menu-row" aria-label="Help">❔ Help</button>
+    <div class="menu-sep">Show on screen</div>
+    <label class="menu-opt"><input type="checkbox" id="optMinimap" checked> Minimap</label>
+    <label class="menu-opt"><input type="checkbox" id="optStats" checked> Stats panel</label>
+    <label class="menu-opt"><input type="checkbox" id="optNeeds" checked> Hunger &amp; stamina</label>
+    <label class="menu-opt"><input type="checkbox" id="optActions" checked> Tasks &amp; Call buttons</label>
+    <div class="menu-tip">Tip: tap the 🍋 title to fold the top-left panel.</div>
   </div>
 
   <div class="map-col">
@@ -897,7 +950,8 @@
           <li><b>1–7</b> – select an item · <b>E</b> or click the ground – eat a lemon / place a torch</li>
           <li><b>F</b> – call Capi and June to follow you</li>
           <li><b>M</b> – map: click it to set a waypoint and walk there</li>
-          <li><b>V</b> or 🎥 – switch between third person and first person</li>
+          <li><b>V</b> or ☰ → 🎥 – switch between third person and first person</li>
+          <li><b>☰</b> – menu: camera, rain, sound, help and what to show on screen</li>
           <li>Bring <b>7 lemons</b> to the abandoned Chest Shop to renovate it and unlock torches</li>
           <li>Chest Shop: torches and <b>name tags</b> (🍋 × 5) to rename your pets</li>
           <li>Pick <b>blueberries</b> in the forests (max 6) and serve them: the next vet check-up moves one day later</li>
@@ -914,7 +968,7 @@
           <li>With a <b>lemon</b> selected, tap the screen to eat it · with a <b>torch</b>, tap the ground to place it</li>
           <li><b>Call</b> button – Capi and June follow you</li>
           <li><b>🗺</b> or the minimap – tap the map to set a waypoint and walk there</li>
-          <li><b>🎥</b> – switch between third person and first person</li>
+          <li><b>☰</b> – menu: camera, rain, sound, help and what to show on screen</li>
           <li>Bring <b>7 lemons</b> to the abandoned Chest Shop to renovate it and unlock torches</li>
           <li>Chest Shop: torches and <b>name tags</b> (🍋 × 5) to rename your pets</li>
           <li>Pick <b>blueberries</b> in the forests (max 6) and serve them: the next vet check-up moves one day later</li>
