@@ -1458,43 +1458,59 @@ function addPoi(p) {
   return p;
 }
 
-function generateRandomPois() {
-  const taken = pois.map((p) => ({ x: p.x, z: p.z }));
-  const spot = (min, max) => {
-    for (let tries = 0; tries < 40; tries++) {
-      const a = rnd(0, TAU);
-      const d = rnd(min, max);
-      const p = { x: Math.cos(a) * d, z: Math.sin(a) * d };
-      if (riverDist(p.x, p.z) > 16 && pathDist(p.x, p.z) > 10 && cableCorridorDist(p.x, p.z) > 20 && !nearCable(p.x, p.z) && taken.every((q) => Math.hypot(q.x - p.x, q.z - p.z) > 30)) {
-        taken.push(p);
-        return p;
-      }
-    }
+// A spot is free if it is away from the river, the path, the cable car and every other place.
+function poiFree(self, x, z) {
+  return riverDist(x, z) > 16 && pathDist(x, z) > 10 && cableCorridorDist(x, z) > 20 && !nearCable(x, z) &&
+    pois.every((q) => q === self || Math.hypot(q.x - x, q.z - z) > 30);
+}
+function freeSpot(min, max, self) {
+  for (let tries = 0; tries < 60; tries++) {
     const a = rnd(0, TAU);
-    return { x: Math.cos(a) * max, z: Math.sin(a) * max };
-  };
-  // Vets are rare: only beyond the river, and each one farther away than the last.
-  const eastSpot = (min, max) => {
-    for (let tries = 0; tries < 60; tries++) {
-      const d = rnd(min, max);
-      const z = rnd(-1, 1) * (25 + d * 0.5);
-      const p = { x: riverX(z) + RIVER_W / 2 + d, z };
-      if (riverDist(p.x, p.z) > 16 && pathDist(p.x, p.z) > 10 && cableCorridorDist(p.x, p.z) > 20 && !nearCable(p.x, p.z) && taken.every((q) => Math.hypot(q.x - p.x, q.z - p.z) > 30)) {
-        taken.push(p);
-        return p;
-      }
-    }
-    const z = rnd(-20, 20);
-    return { x: riverX(z) + RIVER_W / 2 + max, z };
-  };
-  [[22, 45], [110, 160], [260, 360]].forEach(([a, b], i) => {
-    const p = eastSpot(a, b);
+    const d = rnd(min, max);
+    const p = { x: Math.cos(a) * d, z: Math.sin(a) * d };
+    if (poiFree(self, p.x, p.z)) return p;
+  }
+  const a = rnd(0, TAU);
+  return { x: Math.cos(a) * max, z: Math.sin(a) * max };
+}
+// Vets are rare: only beyond the river, and each one farther away than the last.
+function freeEastSpot(min, max, self) {
+  for (let tries = 0; tries < 80; tries++) {
+    const d = rnd(min, max);
+    const z = rnd(-1, 1) * (25 + d * 0.5);
+    const p = { x: riverX(z) + RIVER_W / 2 + d, z };
+    if (poiFree(self, p.x, p.z)) return p;
+  }
+  const z = rnd(-20, 20);
+  return { x: riverX(z) + RIVER_W / 2 + max, z };
+}
+const VET_RANGES = [[22, 45], [110, 160], [260, 360]];
+const PARK_RANGES = [[30, 55], [90, 170], [200, 360]];
+
+function generateRandomPois() {
+  VET_RANGES.forEach(([a, b], i) => {
+    const p = freeEastSpot(a, b, null);
     vets.push(addPoi({ type: 'vet', x: p.x, z: p.z, icon: '🏥', label: `VET ${i + 1}`, clear: 12 }));
   });
-  [[30, 55], [90, 170], [200, 360]].forEach(([a, b], i) => {
-    const p = spot(a, b);
+  PARK_RANGES.forEach(([a, b], i) => {
+    const p = freeSpot(a, b, null);
     parks.push(addPoi({ type: 'park', x: p.x, z: p.z, r: 8, icon: '🎾', label: `PARK ${i + 1}`, clear: 14, active: -10 }));
   });
+}
+
+// Saved vets and parks that now sit on the cable car, a port or another place are moved to a free spot.
+function relocateOverlaps() {
+  const moved = [];
+  const fix = (list, ranges, finder) => list.forEach((p, i) => {
+    if (poiFree(p, p.x, p.z)) return;
+    const [a, b] = ranges[Math.min(i, ranges.length - 1)];
+    const q = finder(a, b, p);
+    movePoi(p, q.x, q.z);
+    moved.push(p.label);
+  });
+  fix(vets, VET_RANGES, freeEastSpot);
+  fix(parks, PARK_RANGES, freeSpot);
+  return moved;
 }
 
 /* ====================================================================
@@ -2363,7 +2379,7 @@ function updateRenovations(dt) {
       site.near = false;
       continue;
     }
-    const near = Math.hypot(player.x - site.x, player.z - site.z) < RENOVATE_RANGE;
+    const near = Math.hypot(player.x - site.x, player.z - site.z) < (site.touchR || RENOVATE_RANGE);
     const enough = canAfford(site);
     if (near && !site.near && !enough && !renovating) renovateHint(site);
     if (!near) site.dismissed = false;
@@ -4316,7 +4332,8 @@ function executeGoal(g) {
 }
 
 function makeGoal(pk) {
-  return { kind: pk.kind, ref: pk.ref, range: RANGE[pk.kind] ?? 1.5 };
+  const touch = pk.kind === 'ruin' && pk.ref && pk.ref.touchR;
+  return { kind: pk.kind, ref: pk.ref, range: touch ? pk.ref.touchR - 0.3 : RANGE[pk.kind] ?? 1.5 };
 }
 
 function toast(msg) {
@@ -5620,6 +5637,8 @@ function applyGame(d) {
   };
   if (d.vetsV === 2) place(vets, d.vets); // older saves keep the new vets beyond the river
   place(parks, d.parks);
+  const moved = relocateOverlaps();
+  if (moved.length) setTimeout(() => toast(`${moved.join(', ')} moved to a free spot, away from the cable car.`), 1500);
 
   for (const s of Array.isArray(d.animals) ? d.animals : []) {
     const a = animalList.find((x) => x.kind === s.kind);
@@ -6330,6 +6349,8 @@ function setupInput() {
   $('cbGen').addEventListener('click', () => { ensureAudio(); buyGenerator(); });
   $('cbSouth').addEventListener('click', () => { ensureAudio(); buySouthLine(); });
   $('cbRide').addEventListener('click', () => { ensureAudio(); requestRide(); });
+  $('cbBuy1').addEventListener('click', () => { ensureAudio(); buyTickets(1); });
+  $('cbBuy2').addEventListener('click', () => { ensureAudio(); buyTickets(2); });
   $('makeNormal').addEventListener('click', () => makeLemonade(false));
   $('makePremium').addEventListener('click', () => makeLemonade(true));
   $('mkClose').addEventListener('click', () => $('marketOverlay').classList.add('hidden'));
@@ -6433,7 +6454,8 @@ const ROUTE_TIME = 90;     // seconds to build the South Port line
 const PORT_RANGE = 30;     // the port only works while you are this close
 const PORT_FISH_EVERY = 60;
 const PORT_CRATE_MAX = 12;
-const CABLE_FARE = 5;       // one-way ticket
+const CABLE_FARE = 3;       // one-way ticket
+const LINE_COST = 10;       // renovating the South Port line
 
 const CABLE_BASE = { x: 2, z: 48 };
 const SOUTH_PORT = { x: riverX(345) - RIVER_W / 2 - 12.5, z: 345 };
@@ -6536,7 +6558,7 @@ function stationPoint(st, lx, lz) {
 }
 const BASE_ST = { x: CABLE_BASE.x, z: CABLE_BASE.z, rot: cableLine.rot };
 const PORT_ST = { x: SOUTH_PORT.x, z: SOUTH_PORT.z, rot: cableLine.rot + Math.PI };
-const GEN_POS = stationPoint(BASE_ST, -8.2, 2.5);
+const GEN_POS = stationPoint(BASE_ST, -11.6, 3);
 const PORT_QUAY = stationPoint(PORT_ST, -11, 0);   // the port's quay on the river bank (its local -x faces the water)
 const CABLE_BASE_REF = stationPoint(BASE_ST, 4.3, 7);
 const CABLE_PORT_REF = stationPoint(PORT_ST, -4.3, 7);
@@ -6571,6 +6593,8 @@ const cable = {
   fish: 0,
   gold: 0,
   portT: 0,
+  tickets: 0,
+  oldLine: null,
   cabins: [],
   routeParts: [],
   rope: null,
@@ -6590,8 +6614,8 @@ const cable = {
 };
 const ride = { wait: null, cab: null, to: null, riders: [] };
 const SOUTH_STAGES = [
-  { at: 0, name: 'Pouring the tower foundations' },
-  { at: 0.12, name: 'Raising the towers' },
+  { at: 0, name: 'Taking down the old line' },
+  { at: 0.12, name: 'Raising the new towers' },
   { at: 0.55, name: 'Pulling the haul rope' },
   { at: 0.64, name: 'Building the South Port station' },
   { at: 0.9, name: 'Hanging the cabins' },
@@ -6640,6 +6664,11 @@ function buildCableMaterials() {
   mats.hullStripe = std(0x1f5f9e, { roughness: 0.6 });
   mats.net = std(0x6d8a7a, { roughness: 1, transparent: true, opacity: 0.8 });
   mats.ribbon = std(0xff6a00, { roughness: 0.8 });
+  mats.rust = std(0x7b4a2c, { roughness: 0.9, metalness: 0.3 });
+  mats.rustDark = std(0x4a3426, { roughness: 0.85, metalness: 0.4 });
+  mats.rustCabin = std(0x7e3a2a, { roughness: 0.9, metalness: 0.2 });
+  mats.oldConcrete = std(0x8f8b82, { roughness: 1 });
+  mats.oldRoof = std(0x9da0a2, { roughness: 0.95, metalness: 0.1 });
 }
 
 // A station: concrete floor, steel frame, roof, the bullwheel with its drive, guide beams and signs.
@@ -6998,16 +7027,17 @@ function buildCableCar() {
     hookK: 6,
     cost: { type: 'coin', n: CABLE_COST },
     buildTime: 90,
-    popTitle: '🚡 Cable car base',
-    goText: 'Build',
-    unlockText: 'Build the main station of the cable car. June and the lemon builders need about 1:30.',
-    hintText: `The cable car base costs ${CABLE_COST} 🪙.`,
-    startText: 'Construction started! June and the lemon builders are on their way 🏗',
-    doneText: 'The cable car base is ready! 🚡 Now build the generator and the line to South Port.',
+    touchR: 10.9,
+    popTitle: '🏚 Abandoned cable car',
+    goText: 'Renovate',
+    unlockText: 'This old cable car station has been closed for years. Renovate it: June and the lemon builders need about 1:30.',
+    hintText: `🚧 No trespassing. Renovating the old cable car costs ${CABLE_COST} 🪙.`,
+    startText: 'Renovation started! June and the lemon builders are on their way 🏗',
+    doneText: 'The cable car base is renovated! 🚡 Now build the generator and renovate the South Port line.',
     icons: ['🚡', '🏗', '🚡'],
-    labels: ['Cable car (build here)', 'Cable car (building)', 'Cable car'],
+    labels: ['Old cable car (abandoned)', 'Cable car (renovating)', 'Cable car'],
     stages: [
-      { at: 0, name: 'Pouring the foundation' },
+      { at: 0, name: 'Clearing the ruins' },
       { at: 0.22, name: 'Raising the steel frame' },
       { at: 0.5, name: 'Installing the bullwheel' },
       { at: 0.7, name: 'Putting on the roof' },
@@ -7026,35 +7056,78 @@ function buildCableCar() {
   for (const m of normal.children) pickableDeep(m, 'cablebase', CABLE_BASE_REF, 'Cable car');
   g.add(normal);
   cableBase.normal = normal;
-  // the plot: survey stakes, ribbons and a sign
+  // the old station: cracked floor, rusty columns, a collapsed roof, the old bullwheel on the floor
   const ruin = new THREE.Group();
   const gravel = cbox(ruin, 10.4, 0.04, 18.4, mats.gravel, 0, 0.02, 0.5);
-  for (const [x, z] of [[-5.2, -8.7], [5.2, -8.7], [-5.2, 9.7], [5.2, 9.7]]) cyl(ruin, 0.04, 0.04, 0.9, mats.wood, x, 0.45, z, 6);
-  for (const [x, z, w, d] of [[0, -8.7, 10.4, 0.03], [0, 9.7, 10.4, 0.03], [-5.2, 0.5, 0.03, 18.4], [5.2, 0.5, 0.03, 18.4]]) cbox(ruin, w, 0.05, d, mats.ribbon, x, 0.72, z);
-  const sign = signMesh(ruin, `CABLE CAR · ${CABLE_COST} 🪙`, 2.4, 0.6, 0, 1.15, 10.1, 0, ['#fff59d', '#3b2412', '#5a3a1e']);
-  for (const x of [-1, 1]) cyl(ruin, 0.04, 0.04, 1.2, mats.darkWood, x, 0.6, 10.05, 6);
-  // a tall billboard you can see from home
-  const board = signMesh(ruin, `🚡 CABLE CAR · BUILD HERE · ${CABLE_COST} 🪙`, 5.2, 1.3, 0, 3.0, -9.4, Math.PI, ['#fff59d', '#c8332b', '#c8332b']);
-  for (const x of [-2.3, 2.3]) cyl(ruin, 0.08, 0.08, 3.7, mats.darkWood, x, 1.85, -9.3, 8);
-  pickable(board, 'ruin', cableBase, 'Cable car base plot');
-  const tripod = new THREE.Group();
-  tripod.position.set(2.5, 0, 6);
-  for (let k = 0; k < 3; k++) {
-    const leg = cyl(tripod, 0.02, 0.02, 1.4, mats.crane, 0, 0.65, 0, 5);
-    leg.rotation.set(0.25 * Math.cos((k * TAU) / 3), 0, 0.25 * Math.sin((k * TAU) / 3));
+  cbox(ruin, 10.4, 0.12, 8, mats.oldConcrete, 0, 0.08, -4.3).rotation.x = 0.015;
+  const slabB = cbox(ruin, 6, 0.12, 10, mats.oldConcrete, -2.2, 0.1, 5.2);
+  slabB.rotation.z = -0.035;
+  const slabC = cbox(ruin, 4.2, 0.12, 10, mats.oldConcrete, 3.1, 0.12, 5.3);
+  slabC.rotation.set(0.05, 0.03, 0.02);
+  const cols = [[-5.05, -8.2, 6.2], [5.05, -8.2, 6.2], [-5.05, -2.5, 6.0], [5.05, -2.5, 3.1], [-5.05, 3.5, 2.4], [5.05, 9.3, 1.6]];
+  for (const [x, z, h] of cols) cbox(ruin, 0.3, h, 0.3, mats.rust, x, h / 2, z);
+  for (const [x, z, ry] of [[-3.5, 7.5, 0.4], [4.2, 4.6, -0.7]]) {
+    const fallen = cbox(ruin, 0.3, 0.3, 6, mats.rust, x, 0.3, z);
+    fallen.rotation.y = ry;
   }
-  cbox(tripod, 0.2, 0.18, 0.3, mats.darkMetal, 0, 1.38, 0);
-  ruin.add(tripod);
-  for (const m of [gravel, sign, ...ruin.children]) if (m.isMesh) pickable(m, 'ruin', cableBase, 'Cable car base plot');
-  g.add(ruin);
+  // back half of the roof still up, the front half fallen in
+  cbox(ruin, 10.9, 0.3, 8.6, mats.oldRoof, 0, 6.35, -5.2);
+  const slope = cbox(ruin, 10.9, 0.28, 10.4, mats.oldRoof, 0, 3.0, 4.2);
+  slope.rotation.x = 0.62;
+  const wheel = new THREE.Mesh(new THREE.TorusGeometry(CABLE_GAUGE, 0.13, 8, 40), mats.rust);
+  wheel.position.set(-0.8, 0.55, -4.5);
+  wheel.rotation.set(Math.PI / 2 + 0.22, 0, 0.1);
+  ruin.add(wheel);
+  const house = cbox(ruin, 3.4, 1.4, 3.8, mats.oldRoof, 1.8, 0.9, -6.5);
+  house.rotation.set(0.1, 0.4, 0.18);
+  for (const [x, z] of [[-2.5, -1], [2.2, 1.5], [-1, 3.2], [3.8, -4.5]]) {
+    const deb = cbox(ruin, rnd(0.4, 0.9), rnd(0.15, 0.35), rnd(0.4, 1.0), mats.oldConcrete, x, 0.25, z);
+    deb.rotation.set(rnd(-0.3, 0.3), rnd(0, 3), rnd(-0.3, 0.3));
+  }
+  for (const [x, z, sc] of [[-4.2, -6.5, 0.7], [3.5, 8, 0.9], [-1.5, 6.5, 0.6], [4.4, -1, 0.5], [-4.4, 1.5, 0.8]]) {
+    const weed = new THREE.Mesh(geo.smallSphere, mats.berryBush);
+    weed.scale.set(sc, sc * 0.6, sc);
+    weed.position.set(x, 0.2, z);
+    ruin.add(weed);
+  }
+  // rusty fence with gaps, and the warning signs facing home
+  for (let k = 0; k < 22; k++) {
+    if (k % 5 === 3) continue;
+    const a = (k / 22) * TAU;
+    const x = Math.sin(a) * 10.2;
+    const z = Math.cos(a) * 10.2;
+    cyl(ruin, 0.04, 0.04, 1.5, mats.rust, x, 0.75, z, 6);
+    const panel = cbox(ruin, 0.04, 1.2, 2.6, mats.net, x, 0.8, z);
+    panel.rotation.y = a;
+    if (k % 7 === 1) panel.rotation.z = 0.5;
+  }
+  const signs = [
+    ['⚠ DO NOT TOUCH', '#ffffff', '#c62828', '#c62828', -3.8],
+    ['⛔ NO TRESPASSING', '#ffebee', '#b71c1c', '#b71c1c', 0],
+    [`🔨 RENOVATE · ${CABLE_COST} 🪙`, '#fff59d', '#3b2412', '#5a3a1e', 3.8],
+  ];
+  const signParts = [];
+  for (const [text, bg, fg, border, x] of signs) {
+    signParts.push(signMesh(ruin, text, 3.0, 0.75, x, 1.55, -11.0, Math.PI, [bg, fg, border]));
+    for (const dx of [-1.2, 1.2]) cyl(ruin, 0.05, 0.05, 1.9, mats.darkWood, x + dx, 0.95, -10.95, 6);
+  }
+  for (const m of [gravel, ...ruin.children]) if (m.isMesh && m.geometry.type !== 'CylinderGeometry') pickable(m, 'ruin', cableBase, 'Old cable car');
   cableBase.ruin = ruin;
   buildBigScaffold(cableBase, g);
   shadowAll(g);
   const stObs = stationObstacles(BASE_ST);
+  // an invisible wall around the old station: touching it asks you to renovate
+  const wall = { x: CABLE_BASE.x, z: CABLE_BASE.z, r: 10, ck: 'static' };
+  obstacles.push(wall);
   cableBase.onStatus = (status) => {
-    if (status !== 'abandoned' && !cableBase.obstaclesOn) {
-      cableBase.obstaclesOn = true;
-      obstacles.push(...stObs);
+    if (status === 'open') {
+      obstacles = obstacles.filter((o) => o !== wall);
+      if (!cableBase.obstaclesOn) {
+        cableBase.obstaclesOn = true;
+        obstacles.push(...stObs);
+      }
+    } else if (!obstacles.includes(wall)) {
+      obstacles.push(wall);
     }
   };
   cableBase.poi = addPoi({ type: 'cable', x: CABLE_BASE.x, z: CABLE_BASE.z, icon: '📐', label: 'Cable car base', clear: 16 });
@@ -7065,20 +7138,115 @@ function buildCableCar() {
   const post = new THREE.Group();
   post.position.set(5.5, 0, 7);
   cyl(post, 0.06, 0.07, 2.4, mats.darkWood, 0, 1.2, 0, 8);
-  const arrow = signMesh(post, '🚡 CABLE CAR · 40 m SOUTH', 1.9, 0.45, 0, 2.0, 0.08, Math.PI, ['#fff59d', '#3b2412', '#5a3a1e']);
+  const arrow = signMesh(post, '🚡 OLD CABLE CAR · 40 m SOUTH', 1.9, 0.45, 0, 2.0, 0.08, Math.PI, ['#fff59d', '#3b2412', '#5a3a1e']);
   arrow.rotation.y = Math.PI;
   shadowAll(post);
   scene.add(post);
   obstacles.push({ x: 5.5, z: 7, r: 0.25, ck: 'static' });
 
   buildGenerator();
-  for (const t of cableLine.towers) routePart(buildTower(t), 0.05 + (0.5 * t.i) / Math.max(1, cableLine.towers.length - 1));
+  for (const t of cableLine.towers) routePart(buildTower(t), 0.12 + (0.43 * t.i) / Math.max(1, cableLine.towers.length - 1));
+  buildOldLine();
   cable.rope = buildRope();
   for (let i = 0; i < CABLE_CABINS; i++) cable.cabins.push(buildCabin(i + 1));
   placeCabins();
   buildSouthPort();
   buildNorthPort();
   applyCableVisuals();
+}
+
+// The old line before it is renovated: two rusty towers still up with a sagging cable and
+// broken cabins hanging from it, the other towers fallen, one cabin crashed in the grass.
+function rustify(obj) {
+  obj.traverse((o) => {
+    if (!o.isMesh) return;
+    if (o.material === mats.towerPaint || o.material === mats.safetyLine) o.material = mats.rust;
+    else if (o.material === mats.darkMetal) o.material = mats.rustDark;
+    else if (o.material === mats.concrete) o.material = mats.oldConcrete;
+  });
+}
+function sagPoints(a, b, sag, n = 18) {
+  const pts = [];
+  for (let i = 0; i <= n; i++) {
+    const t = i / n;
+    pts.push(new THREE.Vector3(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t - sag * 4 * t * (1 - t), a.z + (b.z - a.z) * t));
+  }
+  return pts;
+}
+function buildOldCabin(parent) {
+  const g = new THREE.Group();
+  cbox(g, 0.36, 0.3, 0.7, mats.rustDark, 0, 0.02, 0);
+  const swing = new THREE.Group();
+  g.add(swing);
+  cbox(swing, 0.09, CABLE_HANG - 0.1, 0.09, mats.rustDark, 0, -CABLE_HANG / 2 - 0.05, 0);
+  const body = new THREE.Group();
+  body.position.y = -CABLE_HANG - CABIN_H / 2;
+  swing.add(body);
+  const half = CABIN_H / 2;
+  cbox(body, 1.9, 0.62, 1.9, mats.rustCabin, 0, -half + 0.31, 0);
+  for (const x of [-0.9, 0.9]) for (const z of [-0.9, 0.9]) cbox(body, 0.1, 1.2, 0.1, mats.rustCabin, x, -half + 1.22, z);
+  cbox(body, 1.96, 0.26, 1.96, mats.rustCabin, 0, half - 0.15, 0);
+  cbox(body, 1.84, 1.2, 0.04, mats.cabinGlass, 0, -half + 1.22, -0.9);       // the only window left
+  const door = cbox(body, 0.9, 1.15, 0.05, mats.rustCabin, 1.1, -half + 1.05, 1.2);
+  door.rotation.set(0.1, 0.9, 0.15);                                          // the door hangs open
+  shadowAll(g);
+  parent.add(g);
+  return { g, swing };
+}
+function buildOldLine() {
+  const L = cableLine;
+  const old = new THREE.Group();
+  scene.add(old);
+  const lane = (d, side = 1) => ({ x: L.A.x + L.n.x * CABLE_GAUGE * side + L.u.x * d, z: L.A.z + L.n.z * CABLE_GAUGE * side + L.u.z * d });
+  L.towers.forEach((t) => {
+    const tw = buildTower(t);
+    rustify(tw);
+    if (t.i < 2) {
+      old.add(tw);
+      return;
+    }
+    // fallen along the line, next to its broken foundation
+    const outer = new THREE.Group();
+    outer.position.set(t.x, 0, t.z);
+    outer.rotation.y = L.rot;
+    cbox(outer, 2.3, 0.5, 2.3, mats.oldConcrete, 0, 0.2, 0);
+    tw.position.set(0, 0.5, 1.2);
+    tw.rotation.set(Math.PI / 2 - 0.06, 0, (t.i % 2 ? 0.18 : -0.14));
+    outer.add(tw);
+    old.add(outer);
+  });
+  const t0 = L.towers[0];
+  const t1 = L.towers[1];
+  const mk = (p, y) => ({ x: p.x, y, z: p.z });
+  const start = mk(lane(CABLE_MOUTH), 3.3);
+  const top0 = mk(lane(t0.d), t0.h);
+  const top1 = mk(lane(t1.d), t1.h);
+  const snap = mk(lane(t1.d + 15), 0.06);
+  const spans = [sagPoints(start, top0, 2.2), sagPoints(top0, top1, 4.5), sagPoints(top1, snap, 1.5)];
+  for (const pts of spans) {
+    const curve = new THREE.CatmullRomCurve3(pts);
+    const tube = new THREE.Mesh(new THREE.TubeGeometry(curve, 40, 0.035, 5, false), mats.rustDark);
+    tube.castShadow = true;
+    old.add(tube);
+  }
+  // the other lane: only a short piece is left, lying on the ground
+  const loose = sagPoints(mk(lane(t0.d, -1), t0.h), mk(lane(t0.d + 12, -1), 0.05), 1.0);
+  old.add(new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(loose), 24, 0.035, 5, false), mats.rustDark));
+  // broken cabins still hanging on the old cable
+  for (const [pts, k, tiltX, tiltZ] of [[spans[0], 11, -0.25, 0.35], [spans[1], 8, 0.2, -0.45]]) {
+    const c = buildOldCabin(old);
+    const p = pts[k];
+    c.g.position.copy(p);
+    c.g.rotation.y = L.rot;
+    c.swing.rotation.set(tiltX, 0, tiltZ);
+  }
+  // and one that fell in the grass, on its side
+  const fallen = buildOldCabin(old);
+  const fp = lane(L.towers[2].d - 9, -1);
+  fallen.g.position.set(fp.x, 0.95, fp.z);
+  fallen.g.rotation.set(0, L.rot + 0.6, 0);
+  fallen.swing.rotation.set(0, 0, Math.PI / 2);
+  cable.oldLine = old;
 }
 
 // A big building site: a tower crane, fences, cones and a pile of steel beams.
@@ -7161,6 +7329,7 @@ function applyCableVisuals() {
     part.mesh.scale.y = part.baseY * Math.max(0.05, t);
   }
   cable.rope.visible = p >= 0.58 && cableBase.status === 'open';
+  cable.oldLine.visible = cable.south !== 'open' && p < 0.12;
   cable.portPlot.visible = p < 0.64;
   const showCabins = cable.south === 'open' || (building && p >= 0.92);
   for (const c of cable.cabins) c.group.visible = showCabins;
@@ -7225,8 +7394,8 @@ function renderCable() {
   if (!atBase && cable.gen) $('cbGenTxt').textContent += ' · switch it at the base';
   const south = $('cbSouth');
   if (cable.south === 'none') {
-    $('cbSouthTxt').textContent = `${Math.round(cableLine.len)} m line, ${cableLine.towers.length} towers. Costs ${CABLE_COST} 🪙.`;
-    south.textContent = 'Build';
+    $('cbSouthTxt').textContent = `The old ${Math.round(cableLine.len)} m line is broken. Renovating it costs ${LINE_COST} 🪙.`;
+    south.textContent = 'Renovate';
     south.disabled = false;
   } else if (cable.south === 'building') {
     const s = Math.ceil(cable.southLeft);
@@ -7234,13 +7403,16 @@ function renderCable() {
     south.textContent = 'Building…';
     south.disabled = true;
   } else {
-    $('cbSouthTxt').textContent = 'Open ✓';
+    $('cbSouthTxt').textContent = 'Renovated ✓';
     south.textContent = 'Open';
     south.disabled = true;
   }
   const rideBtn = $('cbRide');
-  rideBtn.textContent = `${atBase ? '🚡 Ride to South Port' : '🚡 Ride to the base'} · 🪙 ${CABLE_FARE}`;
+  rideBtn.textContent = `${atBase ? '🚡 Ride to South Port' : '🚡 Ride to the base'} · uses 1 🎟`;
   rideBtn.disabled = cable.south !== 'open';
+  $('cbTickets').textContent = cable.tickets;
+  $('cbBuy1').disabled = cable.south !== 'open';
+  $('cbBuy2').disabled = cable.south !== 'open';
   $('cbMsg').textContent = '';
 }
 function cableMsg(t) {
@@ -7275,8 +7447,8 @@ function toggleGenerator() {
 function buySouthLine() {
   if (cable.south !== 'none') return;
   if (cableBase.status !== 'open') return cableMsg('Build the cable car base first.');
-  if (state.coins < CABLE_COST) return cableMsg(`You need ${CABLE_COST} 🪙. You have ${state.coins}.`);
-  state.coins -= CABLE_COST;
+  if (state.coins < LINE_COST) return cableMsg(`You need ${LINE_COST} 🪙. You have ${state.coins}.`);
+  state.coins -= LINE_COST;
   cable.south = 'building';
   cable.southLeft = ROUTE_TIME;
   cable.stageIdx = -1;
@@ -7284,7 +7456,7 @@ function buySouthLine() {
   applyCableVisuals();
   refreshHud();
   renderCable();
-  toast('The South Port line is being built 🏗');
+  toast('The old South Port line is being renovated 🏗');
 }
 function finishSouthLine() {
   cable.south = 'open';
@@ -7314,7 +7486,7 @@ function requestRide() {
   if (cable.south !== 'open') return cableMsg('There is no line yet.');
   if (!cable.gen) return cableMsg('The line needs a generator to run.');
   if (!cable.genOn) return cableMsg(cable.overlayAt === 'base' ? 'Turn the generator on first.' : 'The generator at the base is off, so the cabins are stopped.');
-  if (state.coins < CABLE_FARE) return cableMsg(`A ticket costs ${CABLE_FARE} 🪙. You have ${state.coins}.`);
+  if (cable.tickets < 1) return cableMsg(`Buy a ticket first: 1 ride 🪙 ${CABLE_FARE}, 2 rides (there and back) 🪙 ${CABLE_FARE * 2}.`);
   const at = cable.overlayAt;
   const p = boardSpot(at);
   closeCable();
@@ -7322,19 +7494,29 @@ function requestRide() {
 }
 function startWaiting(at) {
   ride.wait = at;
-  toast(`Waiting for the next cabin… The ticket (${CABLE_FARE} 🪙) is paid when you step in. 🚡`);
+  toast('Waiting for the next cabin… 🚡');
 }
 function followersNear() {
   return animalList.filter((a) => state.call && a.friend >= FOLLOW_MIN && Math.hypot(a.x - player.x, a.z - player.z) < 10);
 }
+function buyTickets(n) {
+  if (cable.south !== 'open') return cableMsg('The line is not running yet.');
+  const price = CABLE_FARE * n;
+  if (state.coins < price) return cableMsg(`${n} ${n === 1 ? 'ride costs' : 'rides cost'} ${price} 🪙. You have ${state.coins}.`);
+  state.coins -= price;
+  cable.tickets += n;
+  SFX.coin ? SFX.coin() : SFX.chime();
+  refreshHud();
+  renderCable();
+  toast(n === 2 ? `🎟 2 rides bought: there and back (${price} 🪙).` : `🎟 1 ride bought (${price} 🪙).`);
+}
 function board(c) {
   ride.wait = null;
-  if (state.coins < CABLE_FARE) {
-    toast(`A ticket costs ${CABLE_FARE} 🪙. You have ${state.coins}.`);
+  if (cable.tickets < 1) {
+    toast('You have no ticket. Buy one at the station.');
     return;
   }
-  state.coins -= CABLE_FARE;
-  refreshHud();
+  cable.tickets--;
   ride.cab = c;
   ride.to = c.seg === 0 ? 'port' : 'base';
   ride.riders = followersNear();
@@ -7343,7 +7525,7 @@ function board(c) {
   dirs.clear();
   SFX.cableBell();
   const pets = ride.riders.length ? ` ${ride.riders.map((a) => a.name).join(' and ')} ride with you for free.` : '';
-  toast(`All aboard! Ticket: ${CABLE_FARE} 🪙.${pets} 🚡`);
+  toast(`All aboard! 🎟 left: ${cable.tickets}.${pets} 🚡`);
 }
 function alight() {
   const p = arriveSpot(ride.to);
@@ -7573,7 +7755,7 @@ function drawCableOnMap(g, toS, s) {
 function serializeCable() {
   return {
     gen: cable.gen, on: cable.genOn, south: cable.south,
-    left: Math.round(cable.southLeft * 10) / 10, fish: cable.fish, gold: cable.gold, portT: Math.round(cable.portT),
+    left: Math.round(cable.southLeft * 10) / 10, fish: cable.fish, gold: cable.gold, portT: Math.round(cable.portT), tickets: cable.tickets,
   };
 }
 function applyCable(d) {
@@ -7593,6 +7775,7 @@ function applyCable(d) {
   cable.fish = clamp(Math.floor(n(c.fish)), 0, PORT_CRATE_MAX);
   cable.gold = clamp(Math.floor(n(c.gold)), 0, PORT_CRATE_MAX - cable.fish);
   cable.portT = clamp(n(c.portT), 0, PORT_FISH_EVERY);
+  cable.tickets = clamp(Math.floor(n(c.tickets)), 0, 99);
   cable.power = cableRunning() ? 1 : 0;
   placeCabins();
   applyCableVisuals();
